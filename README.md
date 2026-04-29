@@ -63,6 +63,11 @@ This repo is the official implementation for [**HPE-Li: WiFi-enabled Lightweight
     - test_data/
 ```
 
+#### Some new datasets
+1. [XRF V2](https://dl.acm.org/doi/10.1145/3749521)
+2. [XRF55](https://dl.acm.org/doi/10.1145/3643543)
+   You guys can read [this survey](https://arxiv.org/pdf/2503.08008v2) to update more interesting things!
+
 ## Run Simulations
 
 ### MM-Fi dataset
