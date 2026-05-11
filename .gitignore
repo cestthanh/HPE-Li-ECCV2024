@@ -2,3 +2,9 @@
 **.bak
 **.pyc
 **.pt
+__pycache__/
+data/
+output/
+ckpt/
+*.pth
+*.log
