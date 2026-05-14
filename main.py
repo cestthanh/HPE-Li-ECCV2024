@@ -22,6 +22,14 @@ from traditional_filter import gaussian_filter, mean_filter
 from utils import (add_awgn, add_salt_and_pepper_noise, calulate_error,
                    compute_pck_pckh)
 
+
+def load_full_model(path):
+    try:
+        return torch.load(path, weights_only=False)
+    except TypeError:
+        return torch.load(path)
+
+
 with open(
     experiment_config["mmfi_config"], "r"
 ) as fd:  # change the .yaml file in your code.
@@ -69,11 +77,10 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
     if experiment_config["mode"] != 1:
         metafi = OriginalHPE().to(device)
     else:
-        AEncoder = torch.load(
+        AEncoder = load_full_model(
             os.path.join(
                 denoiser_config["checkpoint"], str(noise_lv), "last.pt"
-            ),
-            weights_only=False,
+            )
         )
         denoiser = AEncoder.getEncoder()
         metafi = FiveLayerDenoiserHPE(denoiser).to(device)
@@ -303,14 +310,13 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
     pck_20_iter = []
     pck_10_iter = []
     pck_5_iter = []
-    metafi = torch.load(
+    metafi = load_full_model(
         os.path.join(
             experiment_config["checkpoint"],
             metafi._get_name(),
             str(noise_lv),
             "best.pt",
-        ),
-        weights_only=False,
+        )
     )
     with torch.no_grad():
         for i, data in enumerate(test_loader):
