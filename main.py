@@ -12,6 +12,7 @@ import torch
 import yaml
 from sklearn.model_selection import train_test_split
 from torch import nn
+from torch.utils.data import Subset
 from tqdm import tqdm
 
 from constant import denoiser_config, experiment_config
@@ -29,15 +30,22 @@ with open(
 dataset_root = experiment_config["dataset_root"]
 train_dataset, test_dataset = make_dataset(dataset_root, config)
 rng_generator = torch.manual_seed(config["init_rand_seed"])
+print(
+    f"dataset_root={dataset_root}, train_samples={len(train_dataset)}, "
+    f"eval_samples={len(test_dataset)}",
+    flush=True,
+)
 train_loader = make_dataloader(
     train_dataset,
     is_training=True,
     generator=rng_generator,
     **config["train_loader"],
 )
-val_data, test_data = train_test_split(
-    test_dataset, test_size=0.5, random_state=41
+val_indices, test_indices = train_test_split(
+    list(range(len(test_dataset))), test_size=0.5, random_state=41
 )
+val_data = Subset(test_dataset, val_indices)
+test_data = Subset(test_dataset, test_indices)
 val_loader = make_dataloader(
     val_data, is_training=False, generator=rng_generator, **config["val_loader"]
 )
@@ -48,6 +56,12 @@ test_loader = make_dataloader(
     **config["test_loader"],
 )
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+log_interval = int(os.getenv("HPE_LI_LOG_INTERVAL", "100"))
+print(
+    f"device={device}, train_batches={len(train_loader)}, "
+    f"val_batches={len(val_loader)}, test_batches={len(test_loader)}",
+    flush=True,
+)
 
 torch.cuda.empty_cache()
 for noise_lv in tqdm(experiment_config["noise_level"]):
@@ -58,12 +72,13 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
         AEncoder = torch.load(
             os.path.join(
                 denoiser_config["checkpoint"], str(noise_lv), "last.pt"
-            )
+            ),
+            weights_only=False,
         )
         denoiser = AEncoder.getEncoder()
         metafi = FiveLayerDenoiserHPE(denoiser).to(device)
 
-    criterion_L2 = nn.MSELoss().cuda()
+    criterion_L2 = nn.MSELoss().to(device)
     optimizer = torch.optim.SGD(metafi.parameters(), lr=0.001)
     n_epochs = 20
     n_epochs_decay = 30
@@ -90,7 +105,6 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
         metafi.train()
         relation_mean = []
         for idx, data in enumerate(train_loader):
-            torch.cuda.empty_cache()
             csi_data = data["input_wifi-csi"]
 
             if experiment_config["mode"] == 0:
@@ -137,16 +151,17 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
             loss.backward(retain_graph=True)
             optimizer.step()
 
-            lr = np.array(scheduler.get_last_lr())
+            lr = scheduler.get_last_lr()[0]
             # print(f"FLOPs: {flops / 1e9} GigaFLOPs")  # Chuyển đổi sang GigaFLOPs (tỷ lệ FLOPs)
             # print(f"Parameters: {params / 1e6} Million")
             message = "(epoch: %d, iters: %d, lr: %.5f, loss: %.3f) " % (
                 epoch_index,
-                idx * 32,
+                idx * config["train_loader"]["batch_size"],
                 lr,
-                loss,
+                loss.item(),
             )
-            # print(message)
+            if idx % log_interval == 0:
+                print(message, flush=True)
         scheduler.step()
         sum_time = np.mean(time_iter)
         train_mean_loss = np.mean(train_loss_iter)
@@ -164,7 +179,6 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
         pck_20_iter = []
         with torch.no_grad():
             for idx, data in enumerate(val_loader):
-                torch.cuda.empty_cache()
                 csi_data = data["input_wifi-csi"]
                 if experiment_config["mode"] == 0:
                     csi_data = csi_data.numpy()
@@ -222,8 +236,12 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
                     compute_pck_pckh(pred_xy_keypoint_pck, xy_keypoint_pck, 0.2)
                 )
 
-                # message1 = '( loss: %.3f) ' % (loss)
-                # print(message1)
+                if idx % log_interval == 0:
+                    print(
+                        "(validation epoch: %d, iters: %d, loss: %.3f)"
+                        % (epoch_index, idx * config["val_loader"]["batch_size"], loss.item()),
+                        flush=True,
+                    )
                 # pck_50_iter.append(compute_pck_pckh(pred_xy_keypoint, xy_keypoint, 0.5))
                 # print(f"FLOPs: {flops / 1e9} GigaFLOPs")  # Chuyển đổi sang GigaFLOPs (tỷ lệ FLOPs)
                 # print(f"Parameters: {params / 1e6} Million")
@@ -287,11 +305,11 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
             metafi._get_name(),
             str(noise_lv),
             "best.pt",
-        )
+        ),
+        weights_only=False,
     )
     with torch.no_grad():
         for i, data in enumerate(test_loader):
-            torch.cuda.empty_cache()
             csi_data = data["input_wifi-csi"]
             # csi_data = torch.mean(csi_data, dim =2)
             scale = 6
@@ -372,6 +390,12 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
             pck_5_iter.append(
                 compute_pck_pckh(pred_xy_keypoint_pck, xy_keypoint_pck, 0.05)
             )
+            if i % log_interval == 0:
+                print(
+                    "(test iters: %d, loss: %.3f)"
+                    % (i * config["test_loader"]["batch_size"], loss.item()),
+                    flush=True,
+                )
 
         test_mean_loss = np.mean(test_loss_iter)
         sum_time = np.sum(time_iter)

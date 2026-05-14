@@ -201,8 +201,14 @@ split_to_use: random_split
 init_rand_seed: 0
 train_loader:
   batch_size: 16
+  num_workers: 8
+  pin_memory: true
 val_loader:
   batch_size: 8
+  num_workers: 4
+  pin_memory: true
 test_loader:
   batch_size: 1
+  num_workers: 4
+  pin_memory: true
 output_folder: ./ckpt/

@@ -359,14 +359,30 @@ def collate_fn_padd(batch):
 
     return batch_data
 
-def make_dataloader(dataset, is_training, generator, batch_size, collate_fn_padd = collate_fn_padd):
+def make_dataloader(
+    dataset,
+    is_training,
+    generator,
+    batch_size,
+    num_workers=0,
+    pin_memory=False,
+    collate_fn_padd=collate_fn_padd,
+):
+    loader_kwargs = {}
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 2
+
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         collate_fn=collate_fn_padd,
         shuffle=is_training,
         drop_last=is_training,
-        generator=generator
+        generator=generator,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
     )
     return loader
 
