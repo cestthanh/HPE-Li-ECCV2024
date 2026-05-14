@@ -85,8 +85,12 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
     epoch_count = 1
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
-        lr_lambda=lambda epoch: 1.0
-        - max(0, epoch + epoch_count - n_epochs) / float(n_epochs_decay + 1),
+        lr_lambda=lambda epoch: max(
+            0.0,
+            1.0
+            - max(0, epoch + epoch_count - n_epochs)
+            / float(n_epochs_decay + 1),
+        ),
     )
 
     num_epochs = experiment_config["epoch"]
@@ -390,12 +394,6 @@ for noise_lv in tqdm(experiment_config["noise_level"]):
             pck_5_iter.append(
                 compute_pck_pckh(pred_xy_keypoint_pck, xy_keypoint_pck, 0.05)
             )
-            if i % log_interval == 0:
-                print(
-                    "(test iters: %d, loss: %.3f)"
-                    % (i * config["test_loader"]["batch_size"], loss.item()),
-                    flush=True,
-                )
 
         test_mean_loss = np.mean(test_loss_iter)
         sum_time = np.sum(time_iter)
