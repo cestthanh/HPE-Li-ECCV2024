@@ -3,6 +3,27 @@ import math
 import numpy as np
 
 
+MMFI_17_JOINT_NAMES = [
+    "Bot Torso",
+    "L.Hip",
+    "L.Knee",
+    "L.Foot",
+    "R.Hip",
+    "R.Knee",
+    "R.Foot",
+    "Center Torso",
+    "Upper Torso",
+    "Neck Base",
+    "Center Head",
+    "R.Shoulder",
+    "R.Elbow",
+    "R.Hand",
+    "L.Shoulder",
+    "L.Elbow",
+    "L.Hand",
+]
+
+
 def _to_numpy(array):
     if hasattr(array, "detach"):
         array = array.detach().cpu().numpy()
@@ -28,6 +49,12 @@ def mpjpe_mm(pred_xyz, gt_xyz):
     pred_xyz, gt_xyz = _validate_pose_arrays(pred_xyz, gt_xyz)
     dist_mm = np.linalg.norm(pred_xyz - gt_xyz, axis=-1) * 1000.0
     return float(np.mean(dist_mm))
+
+
+def per_joint_mpjpe_mm(pred_xyz, gt_xyz):
+    pred_xyz, gt_xyz = _validate_pose_arrays(pred_xyz, gt_xyz)
+    dist_mm = np.linalg.norm(pred_xyz - gt_xyz, axis=-1) * 1000.0
+    return np.mean(dist_mm, axis=0).astype(float).tolist()
 
 
 def pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=50.0):
@@ -90,6 +117,10 @@ def pa_mpjpe_mm(pred_xyz, gt_xyz, return_invalid_count=False):
 
 
 def compute_3d_metrics(pred_xyz, gt_xyz):
+    per_joint = per_joint_mpjpe_mm(pred_xyz, gt_xyz)
+    per_joint_by_name = {
+        name: value for name, value in zip(MMFI_17_JOINT_NAMES, per_joint)
+    }
     pa_mpjpe, invalid_count = pa_mpjpe_mm(
         pred_xyz, gt_xyz, return_invalid_count=True
     )
@@ -97,6 +128,8 @@ def compute_3d_metrics(pred_xyz, gt_xyz):
         "mpjpe_mm": mpjpe_mm(pred_xyz, gt_xyz),
         "pa_mpjpe_mm": pa_mpjpe,
         "pa_mpjpe_invalid_count": invalid_count,
+        "per_joint_mpjpe_mm": per_joint,
+        "per_joint_mpjpe_mm_by_name": per_joint_by_name,
         "pck_50mm": pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=50.0),
         "pck_100mm": pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=100.0),
     }
