@@ -1,0 +1,342 @@
+[
+  {
+    "epoch": 1,
+    "train": {
+      "loss": 0.11038222627499647,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 208.29795082922362,
+      "pa_mpjpe_mm": 104.7639176768598,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 4.089429761179943,
+      "pck_100mm": 21.611907014957126,
+      "loss": 0.0787644899749845,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 2,
+    "train": {
+      "loss": 0.07205591159047442,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 187.3485769554329,
+      "pa_mpjpe_mm": 104.19604529255795,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 9.379561776075937,
+      "pck_100mm": 32.69489863534889,
+      "loss": 0.0690815277998386,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 3,
+    "train": {
+      "loss": 0.06303679634254356,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 182.71493492529703,
+      "pa_mpjpe_mm": 103.65879602628691,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 10.99386506067697,
+      "pck_100mm": 35.607222063285974,
+      "loss": 0.06683486046723197,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 4,
+    "train": {
+      "loss": 0.05974181358726572,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 179.9211250752972,
+      "pa_mpjpe_mm": 103.05611449468552,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.566280084798604,
+      "pck_100mm": 36.55643826304683,
+      "loss": 0.06557047057676989,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 5,
+    "train": {
+      "loss": 0.05779876549009,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 180.03282269519354,
+      "pa_mpjpe_mm": 103.519839074983,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 12.024994559489839,
+      "pck_100mm": 36.526362633842666,
+      "loss": 0.06568817112374979,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 6,
+    "train": {
+      "loss": 0.05640532638961783,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 180.30423276475128,
+      "pa_mpjpe_mm": 103.35693732381827,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.305502373040499,
+      "pck_100mm": 36.05774520807201,
+      "loss": 0.06589173419913548,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 7,
+    "train": {
+      "loss": 0.05552309765182141,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 180.4412631404674,
+      "pa_mpjpe_mm": 103.30076501104692,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.480699026087551,
+      "pck_100mm": 37.01967630798422,
+      "loss": 0.06586429027597407,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 8,
+    "train": {
+      "loss": 0.05459043611846357,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 179.04044738141272,
+      "pa_mpjpe_mm": 103.78325011743823,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.339001244593112,
+      "pck_100mm": 36.87577787069436,
+      "loss": 0.06533320856714932,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 9,
+    "train": {
+      "loss": 0.05390830500333968,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 179.22304452021845,
+      "pa_mpjpe_mm": 103.76514894203784,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 12.150676457139783,
+      "pck_100mm": 37.76594313994459,
+      "loss": 0.06539638643512999,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 10,
+    "train": {
+      "loss": 0.05329766550467617,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 177.85568638628615,
+      "pa_mpjpe_mm": 103.19670988096148,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 12.259242143047517,
+      "pck_100mm": 37.53230684966342,
+      "loss": 0.06480022281135803,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 11,
+    "train": {
+      "loss": 0.05269975273015196,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 179.707840768365,
+      "pa_mpjpe_mm": 103.71526448699612,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.118446630429201,
+      "pck_100mm": 36.17242382674482,
+      "loss": 0.06560042225264155,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 12,
+    "train": {
+      "loss": 0.05225042539427645,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 177.95685714859854,
+      "pa_mpjpe_mm": 103.56401320107723,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 12.002009932293156,
+      "pck_100mm": 37.32483391161677,
+      "loss": 0.06485751255114229,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 13,
+    "train": {
+      "loss": 0.051758359843048864,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 178.67886020958431,
+      "pa_mpjpe_mm": 104.15297291176748,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.77436431612176,
+      "pck_100mm": 36.88372468328895,
+      "loss": 0.06508319445747142,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 14,
+    "train": {
+      "loss": 0.05142002795914969,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 179.32631824074687,
+      "pa_mpjpe_mm": 104.20148860190436,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.691595206482642,
+      "pck_100mm": 37.2782533639469,
+      "loss": 0.06547627326314735,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 15,
+    "train": {
+      "loss": 0.05096266675945686,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 178.3236214879613,
+      "pa_mpjpe_mm": 103.84819137273679,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 12.067051536913556,
+      "pck_100mm": 37.68036208123354,
+      "loss": 0.06487061011226397,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 16,
+    "train": {
+      "loss": 0.050646212073421945,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 179.26918563755623,
+      "pa_mpjpe_mm": 104.320896310934,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.581684675366592,
+      "pck_100mm": 37.053908731468645,
+      "loss": 0.0654027829245538,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 17,
+    "train": {
+      "loss": 0.05037155958127608,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 178.37491731841152,
+      "pa_mpjpe_mm": 103.75520006930743,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 12.207893507820886,
+      "pck_100mm": 37.083495326051604,
+      "loss": 0.06502845840263842,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 18,
+    "train": {
+      "loss": 0.05017657357800362,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 178.26006512567426,
+      "pa_mpjpe_mm": 104.15962599811546,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.97621335602454,
+      "pck_100mm": 37.54367690460646,
+      "loss": 0.0650148509291689,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 19,
+    "train": {
+      "loss": 0.04986860371076448,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 180.01068509447578,
+      "pa_mpjpe_mm": 104.07500574316282,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 10.660343449014473,
+      "pck_100mm": 36.543112069618964,
+      "loss": 0.06575673692461013,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  },
+  {
+    "epoch": 20,
+    "train": {
+      "loss": 0.04972499601626837,
+      "num_batches": 14033
+    },
+    "val": {
+      "mpjpe_mm": 178.55602941403043,
+      "pa_mpjpe_mm": 104.23817817823101,
+      "pa_mpjpe_invalid_count": 0,
+      "pck_50mm": 11.350738075502056,
+      "pck_100mm": 37.443791583225135,
+      "loss": 0.06507808272529421,
+      "num_samples": 48114,
+      "num_batches": 6015
+    }
+  }
+]

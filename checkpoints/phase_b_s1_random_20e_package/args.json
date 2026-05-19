@@ -1,0 +1,22 @@
+{
+  "config": "/home/legion/work/HPE-Li-ECCV2024/dataset_lib/config.yaml",
+  "dataset_root": "/home/legion/work/data/mmfi/dataset",
+  "output_dir": "/home/legion/work/output_hpe_li_3d_s1",
+  "epochs": 20,
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "seed": 0,
+  "device": "cuda",
+  "loss": "smooth_l1",
+  "smooth_l1_beta": 0.05,
+  "grad_clip": 1.0,
+  "log_interval": 100,
+  "eval_max_batches": null,
+  "max_train_batches": null,
+  "train_batch_size": 16,
+  "val_batch_size": 8,
+  "test_batch_size": 1,
+  "num_workers": null,
+  "run_name": "s1_random_20e",
+  "no_test": false
+}
