@@ -136,7 +136,32 @@ def load_model(checkpoint, device):
     return model
 
 
-def evaluate(model, loader, device, max_batches=None):
+def get_pose_normalization(checkpoint):
+    if isinstance(checkpoint, dict):
+        if "pose_normalization" in checkpoint:
+            return checkpoint["pose_normalization"]
+        metrics = checkpoint.get("metrics")
+        if isinstance(metrics, dict) and "pose_normalization" in metrics:
+            return metrics["pose_normalization"]
+    return {"enabled": False}
+
+
+def make_pose_stats_tensors(pose_stats, device):
+    if not pose_stats or not pose_stats.get("enabled", False):
+        return None
+    return {
+        "mean": torch.tensor(pose_stats["mean_xyz"], device=device).view(1, 1, 3),
+        "std": torch.tensor(pose_stats["std_xyz"], device=device).view(1, 1, 3),
+    }
+
+
+def denormalize_pose(pose, pose_stats_tensors):
+    if pose_stats_tensors is None:
+        return pose
+    return pose * pose_stats_tensors["std"] + pose_stats_tensors["mean"]
+
+
+def evaluate(model, loader, device, pose_stats_tensors=None, max_batches=None):
     pred_chunks = []
     gt_chunks = []
     with torch.no_grad():
@@ -146,6 +171,7 @@ def evaluate(model, loader, device, max_batches=None):
             csi_data = batch["input_wifi-csi"].to(device).float()
             gt_pose = batch["output"][:, :, 0:3].to(device).float()
             pred_pose, _ = model(csi_data)
+            pred_pose = denormalize_pose(pred_pose, pose_stats_tensors)
             pred_chunks.append(pred_pose.detach().cpu().numpy())
             gt_chunks.append(gt_pose.detach().cpu().numpy())
 
@@ -179,12 +205,21 @@ def main():
     config = load_config(args, checkpoint)
     loader, selected_dataset = make_eval_loader(args.dataset_root, config, args)
     model = load_model(checkpoint, device)
-    metrics = evaluate(model, loader, device, max_batches=args.max_batches)
+    pose_stats = get_pose_normalization(checkpoint)
+    pose_stats_tensors = make_pose_stats_tensors(pose_stats, device)
+    metrics = evaluate(
+        model,
+        loader,
+        device,
+        pose_stats_tensors=pose_stats_tensors,
+        max_batches=args.max_batches,
+    )
 
     metrics["checkpoint"] = str(checkpoint_path)
     metrics["dataset_root"] = args.dataset_root
     metrics["split_to_use"] = config["split_to_use"]
     metrics["eval_split"] = args.eval_split
+    metrics["pose_normalization"] = pose_stats
 
     output_json = (
         Path(args.output_json)
@@ -206,7 +241,7 @@ def main():
 
     print(
         "eval_split=%s samples=%d mpjpe=%.3f pa_mpjpe=%.3f "
-        "pck50=%.3f pck100=%.3f"
+        "pck50=%.3f pck100=%.3f normalize_pose=%s"
         % (
             args.eval_split,
             len(selected_dataset),
@@ -214,6 +249,7 @@ def main():
             metrics["pa_mpjpe_mm"],
             metrics["pck_50mm"],
             metrics["pck_100mm"],
+            pose_stats.get("enabled", False),
         ),
         flush=True,
     )

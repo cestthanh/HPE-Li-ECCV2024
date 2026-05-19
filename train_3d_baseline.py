@@ -75,6 +75,17 @@ def parse_args():
         choices=["smooth_l1", "mse"],
         help="Pose regression loss.",
     )
+    parser.add_argument(
+        "--normalize-pose",
+        action="store_true",
+        help="Train on xyz normalized by train-set mean/std, then de-normalize for metrics.",
+    )
+    parser.add_argument(
+        "--pose-std-eps",
+        type=float,
+        default=1e-6,
+        help="Small epsilon added to xyz std when pose normalization is enabled.",
+    )
     parser.add_argument("--smooth-l1-beta", type=float, default=0.05)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--log-interval", type=int, default=100)
@@ -224,6 +235,66 @@ def make_loaders(dataset_root, config, seed):
     return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
 
 
+def compute_pose_normalization_stats(dataset, eps=1e-6):
+    if not hasattr(dataset, "data_list"):
+        poses = []
+        for idx in tqdm(range(len(dataset)), desc="compute pose stats"):
+            poses.append(dataset[idx]["output"][:, 0:3].numpy())
+        pose_array = np.stack(poses, axis=0)
+    else:
+        pose_chunks = []
+        last_gt_path = None
+        last_gt = None
+        for item in tqdm(dataset.data_list, desc="compute pose stats"):
+            if item["gt_path"] != last_gt_path:
+                last_gt_path = item["gt_path"]
+                last_gt = np.load(last_gt_path)
+
+            if "idx" in item:
+                pose_chunks.append(last_gt[item["idx"], :, 0:3])
+            else:
+                pose_chunks.append(last_gt[:, :, 0:3].reshape(-1, 3))
+
+        first_chunk = pose_chunks[0]
+        if first_chunk.ndim == 2 and first_chunk.shape == (17, 3):
+            pose_array = np.stack(pose_chunks, axis=0)
+        else:
+            pose_array = np.concatenate(pose_chunks, axis=0).reshape(-1, 17, 3)
+
+    mean_xyz = pose_array.reshape(-1, 3).mean(axis=0).astype(np.float32)
+    std_xyz = pose_array.reshape(-1, 3).std(axis=0).astype(np.float32)
+    std_xyz = np.maximum(std_xyz, eps)
+    return {
+        "enabled": True,
+        "mean_xyz": mean_xyz.tolist(),
+        "std_xyz": std_xyz.tolist(),
+        "eps": float(eps),
+        "num_frames": int(pose_array.shape[0]),
+        "num_joints_per_frame": int(pose_array.shape[1]),
+    }
+
+
+def make_pose_stats_tensors(pose_stats, device):
+    if not pose_stats or not pose_stats.get("enabled", False):
+        return None
+    return {
+        "mean": torch.tensor(pose_stats["mean_xyz"], device=device).view(1, 1, 3),
+        "std": torch.tensor(pose_stats["std_xyz"], device=device).view(1, 1, 3),
+    }
+
+
+def normalize_pose(pose, pose_stats_tensors):
+    if pose_stats_tensors is None:
+        return pose
+    return (pose - pose_stats_tensors["mean"]) / pose_stats_tensors["std"]
+
+
+def denormalize_pose(pose, pose_stats_tensors):
+    if pose_stats_tensors is None:
+        return pose
+    return pose * pose_stats_tensors["std"] + pose_stats_tensors["mean"]
+
+
 def make_criterion(args):
     if args.loss == "smooth_l1":
         return torch.nn.SmoothL1Loss(beta=args.smooth_l1_beta)
@@ -236,7 +307,15 @@ def batch_to_device(batch, device):
     return csi_data, gt_pose
 
 
-def evaluate(model, loader, criterion, device, max_batches=None, desc="eval"):
+def evaluate(
+    model,
+    loader,
+    criterion,
+    device,
+    pose_stats_tensors=None,
+    max_batches=None,
+    desc="eval",
+):
     model.eval()
     losses = []
     pred_chunks = []
@@ -249,10 +328,12 @@ def evaluate(model, loader, criterion, device, max_batches=None, desc="eval"):
 
             csi_data, gt_pose = batch_to_device(batch, device)
             pred_pose, _ = model(csi_data)
-            loss = criterion(pred_pose, gt_pose)
+            gt_pose_for_loss = normalize_pose(gt_pose, pose_stats_tensors)
+            loss = criterion(pred_pose, gt_pose_for_loss)
             losses.append(float(loss.item()))
 
-            pred_chunks.append(pred_pose.detach().cpu().numpy())
+            pred_pose_for_metrics = denormalize_pose(pred_pose, pose_stats_tensors)
+            pred_chunks.append(pred_pose_for_metrics.detach().cpu().numpy())
             gt_chunks.append(gt_pose.detach().cpu().numpy())
 
     if not losses:
@@ -267,7 +348,16 @@ def evaluate(model, loader, criterion, device, max_batches=None, desc="eval"):
     return metrics
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device, args, epoch):
+def train_one_epoch(
+    model,
+    loader,
+    criterion,
+    optimizer,
+    device,
+    args,
+    epoch,
+    pose_stats_tensors=None,
+):
     model.train()
     losses = []
 
@@ -278,7 +368,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, args, epoch):
 
         csi_data, gt_pose = batch_to_device(batch, device)
         pred_pose, _ = model(csi_data)
-        loss = criterion(pred_pose, gt_pose)
+        gt_pose_for_loss = normalize_pose(gt_pose, pose_stats_tensors)
+        loss = criterion(pred_pose, gt_pose_for_loss)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -313,6 +404,7 @@ def save_checkpoint(path, model, optimizer, epoch, config, args, metrics):
             "epoch": epoch,
             "config": config,
             "args": vars(args),
+            "pose_normalization": metrics.get("pose_normalization"),
             "metrics": metrics,
         },
         path,
@@ -351,6 +443,23 @@ def main():
         flush=True,
     )
 
+    pose_stats = {"enabled": False}
+    if args.normalize_pose:
+        pose_stats = compute_pose_normalization_stats(
+            train_dataset, eps=args.pose_std_eps
+        )
+        save_json(run_dir / "xyz_stats.json", pose_stats)
+        print(
+            "pose_normalization enabled mean_xyz=%s std_xyz=%s"
+            % (pose_stats["mean_xyz"], pose_stats["std_xyz"]),
+            flush=True,
+        )
+    else:
+        save_json(run_dir / "xyz_stats.json", pose_stats)
+        print("pose_normalization disabled", flush=True)
+
+    pose_stats_tensors = make_pose_stats_tensors(pose_stats, device)
+
     model = OriginalHPE3D().to(device)
     criterion = make_criterion(args).to(device)
     optimizer = torch.optim.AdamW(
@@ -367,13 +476,21 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         train_metrics = train_one_epoch(
-            model, train_loader, criterion, optimizer, device, args, epoch
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            args,
+            epoch,
+            pose_stats_tensors=pose_stats_tensors,
         )
         val_metrics = evaluate(
             model,
             val_loader,
             criterion,
             device,
+            pose_stats_tensors=pose_stats_tensors,
             max_batches=args.eval_max_batches,
             desc=f"val epoch {epoch}",
         )
@@ -410,7 +527,11 @@ def main():
             epoch,
             config,
             args,
-            {"train": train_metrics, "val": val_metrics},
+            {
+                "train": train_metrics,
+                "val": val_metrics,
+                "pose_normalization": pose_stats,
+            },
         )
 
         current_val_mpjpe = val_metrics["mpjpe_mm"]
@@ -429,7 +550,11 @@ def main():
                 epoch,
                 config,
                 args,
-                {"train": train_metrics, "val": val_metrics},
+                {
+                    "train": train_metrics,
+                    "val": val_metrics,
+                    "pose_normalization": pose_stats,
+                },
             )
             print(
                 f"saved best checkpoint at epoch={epoch} "
@@ -467,6 +592,7 @@ def main():
         "best_epoch": best_epoch,
         "best_val_mpjpe_mm": best_val_mpjpe,
         "stopped_early": stopped_early,
+        "pose_normalization": pose_stats,
         "history": history,
     }
 
@@ -478,6 +604,7 @@ def main():
             test_loader,
             criterion,
             device,
+            pose_stats_tensors=pose_stats_tensors,
             max_batches=args.eval_max_batches,
             desc="test best",
         )
