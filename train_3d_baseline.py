@@ -48,7 +48,20 @@ def parse_args():
     parser.add_argument(
         "--epochs", type=int, default=int(os.getenv("HPE_LI_3D_EPOCHS", "20"))
     )
-    parser.add_argument("--lr", type=float, default=float(os.getenv("HPE_LI_3D_LR", "0.001")))
+    parser.add_argument(
+        "--split-to-use",
+        default=None,
+        choices=[
+            "random_split",
+            "cross_scene_split",
+            "cross_subject_split",
+            "manual_split",
+        ],
+        help="Override config split_to_use without editing dataset_lib/config.yaml.",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=float(os.getenv("HPE_LI_3D_LR", "0.001"))
+    )
     parser.add_argument(
         "--weight-decay",
         type=float,
@@ -65,6 +78,18 @@ def parse_args():
     parser.add_argument("--smooth-l1-beta", type=float, default=0.05)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--log-interval", type=int, default=100)
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=None,
+        help="Stop if val_mpjpe_mm has no meaningful improvement for this many epochs.",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=1.0,
+        help="Minimum val_mpjpe_mm improvement to reset early stopping patience.",
+    )
     parser.add_argument(
         "--eval-max-batches",
         type=int,
@@ -137,6 +162,9 @@ def load_config(path):
 
 def apply_loader_overrides(config, args):
     config = copy.deepcopy(config)
+    if args.split_to_use is not None:
+        config["split_to_use"] = args.split_to_use
+
     for key in ("train_loader", "val_loader", "test_loader"):
         config[key] = dict(config[key])
 
@@ -330,6 +358,9 @@ def main():
     )
 
     best_val_mpjpe = float("inf")
+    best_epoch = None
+    epochs_without_meaningful_improvement = 0
+    stopped_early = False
     history = []
     best_checkpoint_path = run_dir / "checkpoints" / "best.pt"
     last_checkpoint_path = run_dir / "checkpoints" / "last.pt"
@@ -382,8 +413,15 @@ def main():
             {"train": train_metrics, "val": val_metrics},
         )
 
-        if val_metrics["mpjpe_mm"] < best_val_mpjpe:
-            best_val_mpjpe = val_metrics["mpjpe_mm"]
+        current_val_mpjpe = val_metrics["mpjpe_mm"]
+        meaningful_improvement = (
+            current_val_mpjpe < best_val_mpjpe - args.early_stopping_min_delta
+        )
+
+        if current_val_mpjpe < best_val_mpjpe:
+            previous_best = best_val_mpjpe
+            best_val_mpjpe = current_val_mpjpe
+            best_epoch = epoch
             save_checkpoint(
                 best_checkpoint_path,
                 model,
@@ -398,8 +436,39 @@ def main():
                 f"val_mpjpe={best_val_mpjpe:.3f}",
                 flush=True,
             )
+            if meaningful_improvement or previous_best == float("inf"):
+                epochs_without_meaningful_improvement = 0
+            else:
+                epochs_without_meaningful_improvement += 1
+        else:
+            epochs_without_meaningful_improvement += 1
 
-    final_payload = {"best_val_mpjpe_mm": best_val_mpjpe, "history": history}
+        if (
+            args.early_stopping_patience is not None
+            and args.early_stopping_patience > 0
+        ):
+            if epochs_without_meaningful_improvement >= args.early_stopping_patience:
+                print(
+                    "early stopping triggered at epoch=%d "
+                    "best_epoch=%s best_val_mpjpe=%.3f "
+                    "epochs_without_meaningful_improvement=%d"
+                    % (
+                        epoch,
+                        best_epoch,
+                        best_val_mpjpe,
+                        epochs_without_meaningful_improvement,
+                    ),
+                    flush=True,
+                )
+                stopped_early = True
+                break
+
+    final_payload = {
+        "best_epoch": best_epoch,
+        "best_val_mpjpe_mm": best_val_mpjpe,
+        "stopped_early": stopped_early,
+        "history": history,
+    }
 
     if not args.no_test:
         checkpoint = torch.load(best_checkpoint_path, map_location=device)
