@@ -1,21 +1,23 @@
-# HPE-Li 
-This repo is the official implementation for [**HPE-Li: WiFi-enabled Lightweight Dual Selective Kernel Convolution for Human Pose Estimation**](https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/04496.pdf), which was published at **ECCV 2024**. And, its extension was published in the TAI journal, named HPE-Li++. This repository was updated for **HPE-Li++** version with better performance than **HPE-Li**, which allows researchers and practitioners to reproduce our results on MM-Fi and WiPose datasets.
+# HPE-Li
+
+This repo started from the official implementation for [**HPE-Li: WiFi-enabled Lightweight Dual Selective Kernel Convolution for Human Pose Estimation**](https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/04496.pdf), published at **ECCV 2024**. It now focuses on a thesis-oriented **HPE-Li-3D** extension for WiFi-based 3D human pose estimation on MM-Fi.
+
+See [docs/project_structure.md](docs/project_structure.md) for the current project layout and cleanup policy.
 
 ## HPE-Li Framework
 
-![image](Architecture.jpg)
+![image](assets/images/Architecture.jpg)
 
 ## DSK Convolution
 
-![image](DSKconv.jpg)
+![image](assets/images/DSKconv.jpg)
 
 ## Data Preparation
 ### Download datasets.
 
-#### There are 2 datasets to download:
+#### Dataset
 
 - MM-Fi Dataset
-- WiPose Dataset
 
 #### MM-Fi Dataset
 
@@ -35,19 +37,6 @@ This repo is the official implementation for [**HPE-Li: WiFi-enabled Lightweight
             - rgb/
             - mmwave/
             - wifi-csi/
-              ...
-```
-
-#### WiPose Dataset
-
-1. Request dataset [here](https://github.com/NjtechCVLab/Wi-PoseDataset)
-2. Unzip all files from `Wi-Pose.rar` to `./data/wipose/` following directory structure:
-
-```
-- data/
-  - wipose/
-    - Train/
-    - Test/
               ...
 ```
 
@@ -76,28 +65,47 @@ This repo is the official implementation for [**HPE-Li: WiFi-enabled Lightweight
 python att_mmfi.py 
 ```
 
-### WiPose dataset
-
-```
-python att_wipose.py
-```
 ### Check Complexity
 
 ```
-python complexity.py
+python comlexity.py
 ```
 ### Using Denoiser
 
 ```
 python denoiser_training.py
 ```
+
+## HPE-Li-3D Thesis Extension
+
+Train the 3D baseline on MM-Fi:
+
+```powershell
+python train_3d_baseline.py --dataset-root $env:MMFI_DATASET_ROOT --split-to-use random_split --device cuda
+```
+
+Evaluate a 3D checkpoint and export both thesis metrics and GraphPose-style benchmark metrics:
+
+```powershell
+python tools/evaluate_3d_checkpoint.py `
+  --checkpoint checkpoints/phase_b_s1_random_20e_package/best_s1_random_20e.pt `
+  --dataset-root $env:MMFI_DATASET_ROOT `
+  --eval-split test `
+  --batch-size 8 `
+  --num-workers 0 `
+  --device cpu `
+  --method-name "HPE-Li-3D"
+```
+
+The main 3D metrics are MPJPE, PA-MPJPE, PCK@50mm, PCK@100mm, and per-joint MPJPE. GraphPose-style `g_PCK@10/20/30/40/50` is provided only for benchmark compatibility; it uses thresholds based on body scale, not millimeters.
+
 ## Visualization 
 
-![image](Visualization.jpg)
+![image](assets/images/Visualization.jpg)
 
 ## Acknowledgements
 
-This repo is based on [MetaFi++](https://github.com/pridy999/metafi_pose_estimation) and [SKNet](https://arxiv.org/pdf/1903.06586). The data processing is borrowed from [MM-Fi](https://github.com/ybhbingo/MMFi_dataset) and [WiPose](https://github.com/NjtechCVLab/Wi-PoseDataset).
+This repo is based on [MetaFi++](https://github.com/pridy999/metafi_pose_estimation) and [SKNet](https://arxiv.org/pdf/1903.06586). The MM-Fi data processing is borrowed from [MM-Fi](https://github.com/ybhbingo/MMFi_dataset).
 
 Thanks to the original authors for their work!
 
