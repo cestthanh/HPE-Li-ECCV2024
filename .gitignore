@@ -3,8 +3,20 @@
 **.pyc
 **.pt
 __pycache__/
+.venv/
 data/
 output/
 ckpt/
+results/
+archive/legacy_outputs/
 *.pth
 *.log
+demo_server_*.log
+ground_truth.npy
+docs/
+checkpoints/phase_b_*_package/*.json
+assets/images/*.jpg
+assets/figures/*.png
+assets/figures/*.pdf
+output.txt
+output copy.txt
