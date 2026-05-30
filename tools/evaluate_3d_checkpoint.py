@@ -63,6 +63,19 @@ def parse_args():
         default=None,
         help="Path to save Markdown per-joint table. Defaults to checkpoint directory/per_joint_mpjpe.md.",
     )
+    parser.add_argument(
+        "--output-graphpose-md",
+        default=None,
+        help=(
+            "Path to save GraphPose-style benchmark table. Defaults to "
+            "checkpoint directory/graphpose_benchmark_<eval_split>.md."
+        ),
+    )
+    parser.add_argument(
+        "--method-name",
+        default="HPE-Li-3D",
+        help="Method label used in the GraphPose-style benchmark table.",
+    )
     return parser.parse_args()
 
 
@@ -197,6 +210,27 @@ def make_markdown_table(metrics):
     return "\n".join(lines) + "\n"
 
 
+def make_graphpose_markdown_table(metrics, method_name):
+    lines = [
+        "| Method | g_PCK@10 | g_PCK@20 | g_PCK@30 | g_PCK@40 | g_PCK@50 | MPJPE | PA-MPJPE |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        (
+            f"| {method_name} "
+            f"| {metrics['g_PCK@10']:.1f} "
+            f"| {metrics['g_PCK@20']:.1f} "
+            f"| {metrics['g_PCK@30']:.1f} "
+            f"| {metrics['g_PCK@40']:.1f} "
+            f"| {metrics['g_PCK@50']:.1f} "
+            f"| {metrics['mpjpe_mm']:.1f} "
+            f"| {metrics['pa_mpjpe_mm']:.1f} |"
+        ),
+        "",
+        "`g_PCK@10`..`g_PCK@50` are GraphPose-style PCK values using thresholds 0.1..0.5 of the MMFi body scale, not millimeters.",
+        "For MMFi, the scale is the ground-truth distance between joint indices 5 and 12, matching GraphPose-Fi.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def main():
     args = parse_args()
     device = resolve_device(args.device)
@@ -231,17 +265,27 @@ def main():
         if args.output_md is not None
         else checkpoint_path.parent / f"per_joint_mpjpe_{args.eval_split}.md"
     )
+    output_graphpose_md = (
+        Path(args.output_graphpose_md)
+        if args.output_graphpose_md is not None
+        else checkpoint_path.parent / f"graphpose_benchmark_{args.eval_split}.md"
+    )
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_md.parent.mkdir(parents=True, exist_ok=True)
+    output_graphpose_md.parent.mkdir(parents=True, exist_ok=True)
     with open(output_json, "w") as fd:
         json.dump(metrics, fd, indent=2)
     with open(output_md, "w") as fd:
         fd.write(make_markdown_table(metrics))
+    graphpose_table = make_graphpose_markdown_table(metrics, args.method_name)
+    with open(output_graphpose_md, "w") as fd:
+        fd.write(graphpose_table)
 
     print(
         "eval_split=%s samples=%d mpjpe=%.3f pa_mpjpe=%.3f "
-        "pck50=%.3f pck100=%.3f normalize_pose=%s"
+        "pck50mm=%.3f pck100mm=%.3f g_PCK@10=%.3f g_PCK@20=%.3f "
+        "g_PCK@30=%.3f g_PCK@40=%.3f g_PCK@50=%.3f normalize_pose=%s"
         % (
             args.eval_split,
             len(selected_dataset),
@@ -249,12 +293,19 @@ def main():
             metrics["pa_mpjpe_mm"],
             metrics["pck_50mm"],
             metrics["pck_100mm"],
+            metrics["g_PCK@10"],
+            metrics["g_PCK@20"],
+            metrics["g_PCK@30"],
+            metrics["g_PCK@40"],
+            metrics["g_PCK@50"],
             pose_stats.get("enabled", False),
         ),
         flush=True,
     )
     print(f"saved_json={output_json}", flush=True)
     print(f"saved_md={output_md}", flush=True)
+    print(f"saved_graphpose_md={output_graphpose_md}", flush=True)
+    print(graphpose_table, flush=True)
     print(make_markdown_table(metrics), flush=True)
 
 
