@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HPE-Li-3D Demo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      background: #08090d;
+      color: #d7dbe8;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      font-size: 13px;
+    }
+
+    header {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: #10131a;
+      border-bottom: 1px solid #252a35;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    #path-info {
+      max-width: 60vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #8c94a8;
+      font-size: 11px;
+    }
+
+    #main {
+      height: calc(100vh - 96px);
+      display: grid;
+      grid-template-columns: 0.92fr 1fr 1fr;
+      gap: 1px;
+      background: #252a35;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      background: #0b0d12;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .panel-title {
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      border-bottom: 1px solid #202532;
+      color: #aeb6c8;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .viewer,
+    #rgb-wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    #rgb-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #050609;
+    }
+
+    #rgb-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+
+    #rgb-placeholder {
+      color: #5b6272;
+      font-size: 13px;
+    }
+
+    .viewer canvas {
+      display: block;
+    }
+
+    #controls {
+      height: 52px;
+      display: grid;
+      grid-template-columns: auto auto minmax(160px, 1fr) auto auto auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 12px;
+      background: #10131a;
+      border-top: 1px solid #252a35;
+    }
+
+    button,
+    select {
+      height: 32px;
+      border: 1px solid #303747;
+      background: #171b24;
+      color: #d7dbe8;
+      border-radius: 6px;
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover,
+    select:hover {
+      background: #202635;
+    }
+
+    #play-btn.active {
+      border-color: #ff8a3d;
+      color: #ffb17b;
+    }
+
+    #frame-slider {
+      width: 100%;
+      accent-color: #5bd0ff;
+    }
+
+    #frame-counter,
+    #mpjpe {
+      color: #aeb6c8;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    #mpjpe {
+      color: #ffb17b;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 44px 0 52px 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(8, 9, 13, 0.94);
+      color: #d7dbe8;
+      font-size: 14px;
+    }
+
+    #loading.hidden {
+      display: none;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    @media (max-width: 900px) {
+      #main {
+        grid-template-columns: 1fr;
+        grid-template-rows: 0.9fr 1fr 1fr;
+      }
+
+      #path-info {
+        display: none;
+      }
+
+      #controls {
+        grid-template-columns: auto auto 1fr auto;
+      }
+
+      #fit-btn,
+      #fps-select,
+      #mpjpe {
+        display: none;
+      }
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <header>
+    <h1>HPE-Li-3D Inference Demo</h1>
+    <div id="path-info"></div>
+  </header>
+
+  <div id="loading">Connecting to local server...</div>
+
+  <main id="main">
+    <section class="panel">
+      <div class="panel-title">RGB <span id="frame-name"></span></div>
+      <div id="rgb-wrap">
+        <div id="rgb-placeholder">No RGB frame</div>
+        <img id="rgb-image" alt="RGB frame">
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span><span class="dot" style="background:#00E5FF"></span>Ground Truth</span></div>
+      <div class="viewer" id="gt-viewer"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span><span class="dot" style="background:#FF6D00"></span>CSI Inference</span><span>GT overlay</span></div>
+      <div class="viewer" id="pred-viewer"></div>
+    </section>
+  </main>
+
+  <div id="controls">
+    <button id="play-btn">Play</button>
+    <button id="prev-btn">Prev</button>
+    <input type="range" id="frame-slider" min="0" max="0" value="0">
+    <button id="next-btn">Next</button>
+    <button id="fit-btn">Fit View</button>
+    <select id="fps-select">
+      <option value="10">10 fps</option>
+      <option value="15">15 fps</option>
+      <option value="30">30 fps</option>
+    </select>
+    <span id="frame-counter">0 / 0</span>
+    <span id="mpjpe">MPJPE -- mm</span>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    let cfg = null;
+    let gt = null;
+    let pred = null;
+    let diagnostics = null;
+    let baseRoot = [0, 0, 0];
+    let currentFrame = 0;
+    let timer = null;
+
+    const loading = document.getElementById('loading');
+    const slider = document.getElementById('frame-slider');
+    const counter = document.getElementById('frame-counter');
+    const playBtn = document.getElementById('play-btn');
+    const fpsSelect = document.getElementById('fps-select');
+    const frameName = document.getElementById('frame-name');
+    const mpjpe = document.getElementById('mpjpe');
+    const rgbImg = document.getElementById('rgb-image');
+    const rgbPlaceholder = document.getElementById('rgb-placeholder');
+    const pathInfo = document.getElementById('path-info');
+
+    function noCache(url) {
+      return url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+    }
+
+    function toThree(k) {
+      // MMFi/camera coordinates: x is lateral, y is vertical/down, z is depth.
+      // Three.js is y-up and its camera looks along -z by default, so flip
+      // MMFi y and z to view the pose from the RGB camera side.
+      return new THREE.Vector3(
+        k[0] - baseRoot[0],
+        -(k[1] - baseRoot[1]),
+        -(k[2] - baseRoot[2])
+      );
+    }
+
+    function color(value) {
+      return new THREE.Color(value);
+    }
+
+    class PoseViewer {
+      constructor(containerId, jointColors, edgeColors) {
+        this.container = document.getElementById(containerId);
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x08090d);
+        this.camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
+        this.camera.position.set(0, 0.4, 2.5);
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+        this.container.appendChild(this.renderer.domElement);
+
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.08;
+        this.controls.minDistance = 0.15;
+        this.controls.maxDistance = 20;
+
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.78));
+        const light = new THREE.DirectionalLight(0xffffff, 0.55);
+        light.position.set(2, 4, 3);
+        this.scene.add(light);
+        this.scene.add(new THREE.GridHelper(4, 24, 0x233044, 0x151a24));
+
+        this.group = new THREE.Group();
+        this.scene.add(this.group);
+        this.joints = [];
+        this.bones = [];
+        this.referenceGroup = null;
+        this.referenceJoints = [];
+        this.referenceBones = [];
+
+        for (let i = 0; i < 17; i++) {
+          const c = color(jointColors[i]);
+          const mat = new THREE.MeshStandardMaterial({
+            color: c,
+            emissive: c,
+            emissiveIntensity: 0.25,
+            roughness: 0.35
+          });
+          const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.025, 16, 16), mat);
+          this.group.add(sphere);
+          this.joints.push(sphere);
+        }
+
+        for (let i = 0; i < cfg.edges.length; i++) {
+          const geo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(),
+            new THREE.Vector3()
+          ]);
+          const line = new THREE.Line(
+            geo,
+            new THREE.LineBasicMaterial({ color: color(edgeColors[i]) })
+          );
+          this.group.add(line);
+          this.bones.push(line);
+        }
+
+        this.resizeObserver = new ResizeObserver(() => this.resize());
+        this.resizeObserver.observe(this.container);
+        this.resize();
+        this.animate();
+      }
+
+      update(kpts) {
+        if (!kpts) return;
+        for (let i = 0; i < 17; i++) {
+          this.joints[i].position.copy(toThree(kpts[i]));
+        }
+        for (let i = 0; i < cfg.edges.length; i++) {
+          const [a, b] = cfg.edges[i];
+          const pos = this.bones[i].geometry.attributes.position.array;
+          const pa = toThree(kpts[a]);
+          const pb = toThree(kpts[b]);
+          pos[0] = pa.x; pos[1] = pa.y; pos[2] = pa.z;
+          pos[3] = pb.x; pos[4] = pb.y; pos[5] = pb.z;
+          this.bones[i].geometry.attributes.position.needsUpdate = true;
+        }
+      }
+
+      addReference(jointColors, edgeColors) {
+        this.referenceGroup = new THREE.Group();
+        this.group.add(this.referenceGroup);
+        this.referenceJoints = [];
+        this.referenceBones = [];
+
+        for (let i = 0; i < 17; i++) {
+          const c = color(jointColors[i]);
+          const mat = new THREE.MeshStandardMaterial({
+            color: c,
+            emissive: c,
+            emissiveIntensity: 0.1,
+            roughness: 0.45,
+            transparent: true,
+            opacity: 0.32
+          });
+          const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.018, 16, 16), mat);
+          this.referenceGroup.add(sphere);
+          this.referenceJoints.push(sphere);
+        }
+
+        for (let i = 0; i < cfg.edges.length; i++) {
+          const geo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(),
+            new THREE.Vector3()
+          ]);
+          const line = new THREE.Line(
+            geo,
+            new THREE.LineBasicMaterial({
+              color: color(edgeColors[i]),
+              transparent: true,
+              opacity: 0.38
+            })
+          );
+          this.referenceGroup.add(line);
+          this.referenceBones.push(line);
+        }
+      }
+
+      updateReference(kpts) {
+        if (!kpts || !this.referenceGroup) return;
+        for (let i = 0; i < 17; i++) {
+          this.referenceJoints[i].position.copy(toThree(kpts[i]));
+        }
+        for (let i = 0; i < cfg.edges.length; i++) {
+          const [a, b] = cfg.edges[i];
+          const pos = this.referenceBones[i].geometry.attributes.position.array;
+          const pa = toThree(kpts[a]);
+          const pb = toThree(kpts[b]);
+          pos[0] = pa.x; pos[1] = pa.y; pos[2] = pa.z;
+          pos[3] = pb.x; pos[4] = pb.y; pos[5] = pb.z;
+          this.referenceBones[i].geometry.attributes.position.needsUpdate = true;
+        }
+      }
+
+      fit(frames) {
+        const pts = [];
+        const useCount = Math.min(frames.length, 40);
+        for (let t = 0; t < useCount; t++) {
+          for (const k of frames[t]) pts.push(toThree(k));
+        }
+        if (!pts.length) return;
+        const box = new THREE.Box3().setFromPoints(pts);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const radius = Math.max(size.x, size.y, size.z, 0.5);
+        this.controls.target.copy(center);
+        this.camera.position.set(center.x, center.y + radius * 0.12, center.z + radius * 2.3);
+        this.controls.update();
+      }
+
+      resize() {
+        const w = Math.max(1, this.container.clientWidth);
+        const h = Math.max(1, this.container.clientHeight);
+        this.camera.aspect = w / h;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(w, h);
+      }
+
+      animate() {
+        requestAnimationFrame(() => this.animate());
+        this.controls.update();
+        this.renderer.render(this.scene, this.camera);
+      }
+    }
+
+    let gtViewer = null;
+    let predViewer = null;
+
+    async function waitUntilReady() {
+      while (true) {
+        const res = await fetch(noCache('/api/status'));
+        const s = await res.json();
+        if (s.error) throw new Error(s.error);
+        if (s.ready) return;
+        loading.textContent = s.status || 'Loading...';
+        await new Promise(r => setTimeout(r, 700));
+      }
+    }
+
+    async function boot() {
+      try {
+        await waitUntilReady();
+        loading.textContent = 'Loading visualization...';
+        [cfg, gt, pred] = await Promise.all([
+          fetch(noCache('/api/config')).then(r => r.json()),
+          fetch(noCache('/api/data')).then(r => r.json()),
+          fetch(noCache('/api/predict')).then(r => r.json())
+        ]);
+        diagnostics = await fetch(noCache('/api/diagnostics')).then(r => r.json());
+
+        baseRoot = gt.frames[0][0].slice();
+        slider.max = gt.num_frames - 1;
+        const seqMpjpe = diagnostics?.mpjpe_mm == null ? '' : ` | seq MPJPE ${diagnostics.mpjpe_mm.toFixed(1)} mm`;
+        const corr = diagnostics?.temporal_correlation?.mean == null ? '' : ` | corr ${diagnostics.temporal_correlation.mean.toFixed(2)}`;
+        pathInfo.textContent = (cfg.paths.checkpoint || '') + seqMpjpe + corr;
+
+        gtViewer = new PoseViewer('gt-viewer', cfg.gt_joint_colors, cfg.gt_edge_colors);
+        predViewer = new PoseViewer('pred-viewer', cfg.pred_joint_colors, cfg.pred_edge_colors);
+        predViewer.addReference(cfg.gt_joint_colors, cfg.gt_edge_colors);
+        fitAll();
+        goToFrame(0);
+        loading.classList.add('hidden');
+      } catch (err) {
+        console.error(err);
+        loading.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    function goToFrame(idx) {
+      if (!gt) return;
+      currentFrame = Math.max(0, Math.min(idx, gt.num_frames - 1));
+      slider.value = currentFrame;
+      counter.textContent = `${currentFrame + 1} / ${gt.num_frames}`;
+      frameName.textContent = gt.frame_names[currentFrame] || '';
+
+      gtViewer.update(gt.frames[currentFrame]);
+      predViewer.update(pred.frames[currentFrame]);
+      predViewer.updateReference(gt.frames[currentFrame]);
+
+      const frameMpjpe = pred.mpjpe_frames_mm?.[currentFrame];
+      mpjpe.textContent = frameMpjpe == null ? 'MPJPE -- mm' : `MPJPE ${frameMpjpe.toFixed(1)} mm`;
+
+      rgbImg.src = noCache('/api/rgb?frame=' + currentFrame);
+    }
+
+    rgbImg.onload = () => {
+      rgbPlaceholder.style.display = 'none';
+      rgbImg.style.display = 'block';
+    };
+    rgbImg.onerror = () => {
+      rgbImg.style.display = 'none';
+      rgbPlaceholder.style.display = 'block';
+    };
+
+    function fitAll() {
+      if (!gtViewer || !predViewer) return;
+      const sharedFrames = gt.frames.concat(pred.frames);
+      gtViewer.fit(sharedFrames);
+      predViewer.fit(sharedFrames);
+    }
+
+    function startPlay() {
+      if (timer) return;
+      playBtn.textContent = 'Pause';
+      playBtn.classList.add('active');
+      const fps = parseInt(fpsSelect.value, 10);
+      timer = setInterval(() => {
+        const next = currentFrame >= gt.num_frames - 1 ? 0 : currentFrame + 1;
+        goToFrame(next);
+      }, 1000 / fps);
+    }
+
+    function stopPlay() {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+      playBtn.textContent = 'Play';
+      playBtn.classList.remove('active');
+    }
+
+    function togglePlay() {
+      timer ? stopPlay() : startPlay();
+    }
+
+    playBtn.addEventListener('click', togglePlay);
+    document.getElementById('prev-btn').addEventListener('click', () => {
+      stopPlay();
+      goToFrame(currentFrame - 1);
+    });
+    document.getElementById('next-btn').addEventListener('click', () => {
+      stopPlay();
+      goToFrame(currentFrame + 1);
+    });
+    document.getElementById('fit-btn').addEventListener('click', fitAll);
+    slider.addEventListener('input', () => {
+      stopPlay();
+      goToFrame(parseInt(slider.value, 10));
+    });
+    fpsSelect.addEventListener('change', () => {
+      if (timer) {
+        stopPlay();
+        startPlay();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === ' ') {
+        event.preventDefault();
+        togglePlay();
+      } else if (event.key === 'ArrowLeft') {
+        stopPlay();
+        goToFrame(currentFrame - 1);
+      } else if (event.key === 'ArrowRight') {
+        stopPlay();
+        goToFrame(currentFrame + 1);
+      }
+    });
+
+    boot();
+  </script>
+</body>
+
+</html>
