@@ -136,7 +136,18 @@ class SKUnit(nn.Module):
             )
         
         self.conv2_sk = nn.Sequential(
-            SKConv(input_dim=mid_features, output_dim=out_features, dim1= dim1,dim2=dim2 ,pool_dim=pool_dim, M = 4, G=1, r=4, stride=1 ,L=32),
+            SKConv(
+                input_dim=mid_features,
+                output_dim=out_features,
+                dim1=dim1,
+                dim2=dim2,
+                pool_dim=pool_dim,
+                M=M,
+                G=G,
+                r=r,
+                stride=stride,
+                L=L,
+            ),
             nn.BatchNorm2d(out_features),
             nn.ReLU(inplace=True),
             )
