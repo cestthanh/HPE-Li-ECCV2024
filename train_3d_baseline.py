@@ -506,7 +506,9 @@ def main():
         print(
             "epoch=%d train_loss=%.6f val_loss=%.6f "
             "val_mpjpe=%.3f val_pa_mpjpe=%.3f "
-            "val_pck50=%.3f val_pck100=%.3f pa_invalid=%d"
+            "val_pck50mm=%.3f val_pck100mm=%.3f "
+            "val_g_PCK@10=%.3f val_g_PCK@20=%.3f val_g_PCK@30=%.3f "
+            "val_g_PCK@40=%.3f val_g_PCK@50=%.3f pa_invalid=%d"
             % (
                 epoch,
                 train_metrics["loss"],
@@ -515,6 +517,11 @@ def main():
                 val_metrics["pa_mpjpe_mm"],
                 val_metrics["pck_50mm"],
                 val_metrics["pck_100mm"],
+                val_metrics["g_PCK@10"],
+                val_metrics["g_PCK@20"],
+                val_metrics["g_PCK@30"],
+                val_metrics["g_PCK@40"],
+                val_metrics["g_PCK@50"],
                 val_metrics["pa_mpjpe_invalid_count"],
             ),
             flush=True,
@@ -611,13 +618,20 @@ def main():
         final_payload["test"] = test_metrics
         print(
             "test_loss=%.6f test_mpjpe=%.3f test_pa_mpjpe=%.3f "
-            "test_pck50=%.3f test_pck100=%.3f pa_invalid=%d"
+            "test_pck50mm=%.3f test_pck100mm=%.3f "
+            "test_g_PCK@10=%.3f test_g_PCK@20=%.3f test_g_PCK@30=%.3f "
+            "test_g_PCK@40=%.3f test_g_PCK@50=%.3f pa_invalid=%d"
             % (
                 test_metrics["loss"],
                 test_metrics["mpjpe_mm"],
                 test_metrics["pa_mpjpe_mm"],
                 test_metrics["pck_50mm"],
                 test_metrics["pck_100mm"],
+                test_metrics["g_PCK@10"],
+                test_metrics["g_PCK@20"],
+                test_metrics["g_PCK@30"],
+                test_metrics["g_PCK@40"],
+                test_metrics["g_PCK@50"],
                 test_metrics["pa_mpjpe_invalid_count"],
             ),
             flush=True,
