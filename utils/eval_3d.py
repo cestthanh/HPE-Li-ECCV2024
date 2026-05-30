@@ -5,23 +5,26 @@ import numpy as np
 
 MMFI_17_JOINT_NAMES = [
     "Bot Torso",
-    "L.Hip",
-    "L.Knee",
-    "L.Foot",
     "R.Hip",
     "R.Knee",
     "R.Foot",
+    "L.Hip",
+    "L.Knee",
+    "L.Foot",
     "Center Torso",
     "Upper Torso",
     "Neck Base",
     "Center Head",
-    "R.Shoulder",
-    "R.Elbow",
-    "R.Hand",
     "L.Shoulder",
     "L.Elbow",
     "L.Hand",
+    "R.Shoulder",
+    "R.Elbow",
+    "R.Hand",
 ]
+
+GRAPHPOSE_PCK_THRESHOLDS = (0.1, 0.2, 0.3, 0.4, 0.5)
+GRAPHPOSE_MMFI_SCALE_JOINTS = (5, 12)
 
 
 def _to_numpy(array):
@@ -61,6 +64,37 @@ def pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=50.0):
     pred_xyz, gt_xyz = _validate_pose_arrays(pred_xyz, gt_xyz)
     dist_mm = np.linalg.norm(pred_xyz - gt_xyz, axis=-1) * 1000.0
     return float(np.mean(dist_mm <= threshold_mm) * 100.0)
+
+
+def graphpose_body_scale_mmfi(gt_xyz, scale_joints=GRAPHPOSE_MMFI_SCALE_JOINTS):
+    """Body scale used by GraphPose-Fi for MMFi CSI PCK."""
+    gt_xyz = _to_numpy(gt_xyz)
+    joint_a, joint_b = scale_joints
+    return np.linalg.norm(gt_xyz[:, joint_a, :] - gt_xyz[:, joint_b, :], axis=-1)
+
+
+def graphpose_pck_mmfi(pred_xyz, gt_xyz, threshold, eps=1e-8):
+    """GraphPose-Fi compatible PCK for MMFi 17-joint 3D pose.
+
+    `threshold=0.5` corresponds to benchmark column `g_PCK@50`, meaning
+    the joint error is at most `0.5 * body_scale`. It is not a 50 mm threshold.
+    """
+    pred_xyz, gt_xyz = _validate_pose_arrays(pred_xyz, gt_xyz)
+    if pred_xyz.shape[1] <= max(GRAPHPOSE_MMFI_SCALE_JOINTS):
+        raise ValueError(
+            "GraphPose-style MMFi PCK expects at least "
+            f"{max(GRAPHPOSE_MMFI_SCALE_JOINTS) + 1} joints, got {pred_xyz.shape[1]}"
+        )
+
+    dist = np.linalg.norm(pred_xyz - gt_xyz, axis=-1)
+    scale = graphpose_body_scale_mmfi(gt_xyz)
+    dist_norm = np.divide(
+        dist,
+        scale[:, None],
+        out=np.full_like(dist, np.inf),
+        where=scale[:, None] > eps,
+    )
+    return float(np.mean(dist_norm <= threshold) * 100.0)
 
 
 def _align_by_similarity_transform(pred, gt, eps=1e-8):
@@ -124,7 +158,7 @@ def compute_3d_metrics(pred_xyz, gt_xyz):
     pa_mpjpe, invalid_count = pa_mpjpe_mm(
         pred_xyz, gt_xyz, return_invalid_count=True
     )
-    return {
+    metrics = {
         "mpjpe_mm": mpjpe_mm(pred_xyz, gt_xyz),
         "pa_mpjpe_mm": pa_mpjpe,
         "pa_mpjpe_invalid_count": invalid_count,
@@ -132,4 +166,9 @@ def compute_3d_metrics(pred_xyz, gt_xyz):
         "per_joint_mpjpe_mm_by_name": per_joint_by_name,
         "pck_50mm": pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=50.0),
         "pck_100mm": pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=100.0),
+        "g_PCK_scale_joints": list(GRAPHPOSE_MMFI_SCALE_JOINTS),
     }
+    for threshold in GRAPHPOSE_PCK_THRESHOLDS:
+        tag = int(round(threshold * 100))
+        metrics[f"g_PCK@{tag}"] = graphpose_pck_mmfi(pred_xyz, gt_xyz, threshold)
+    return metrics
