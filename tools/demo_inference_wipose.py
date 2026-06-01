@@ -79,6 +79,16 @@ def parse_args():
         help="Optional directory containing Train.pt and Test.pt.",
     )
     parser.add_argument("--split", default="Test", choices=["Train", "Test"])
+    parser.add_argument(
+        "--action",
+        default=None,
+        help="Optional WiPose action prefix, e.g. bend, walk, jump, wave.",
+    )
+    parser.add_argument(
+        "--sequence",
+        default=None,
+        help="Optional sequence id within an action, e.g. 009 for bend_009.",
+    )
     parser.add_argument("--indices", type=int, nargs="*", default=None)
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--num-samples", type=int, default=40)
@@ -121,13 +131,41 @@ def load_model(checkpoint_path, device):
     return model
 
 
-def make_indices(args, dataset_len):
+def action_filtered_indices(dataset, action=None, sequence=None):
+    if not action and not sequence:
+        return list(range(len(dataset)))
+    if sequence and not action:
+        raise ValueError("--sequence requires --action.")
+    if not hasattr(dataset, "file_list"):
+        raise ValueError("This dataset does not expose file names for action filtering.")
+
+    prefix = f"{action}_{sequence}-" if sequence else f"{action}_"
+    indices = [
+        idx
+        for idx, name in enumerate(dataset.file_list)
+        if isinstance(name, str) and name.startswith(prefix)
+    ]
+    if not indices:
+        raise ValueError(f"No samples matched action filter: {prefix}")
+    return indices
+
+
+def make_indices(args, dataset_len, candidate_indices=None):
+    candidate_indices = candidate_indices or list(range(dataset_len))
     if args.indices:
-        indices = args.indices
+        indices = [
+            candidate_indices[idx]
+            for idx in args.indices
+            if 0 <= idx < len(candidate_indices)
+        ]
     else:
         stop = args.start_index + args.num_samples * args.stride
-        indices = list(range(args.start_index, stop, args.stride))
-    indices = [idx for idx in indices if 0 <= idx < dataset_len]
+        relative_indices = list(range(args.start_index, stop, args.stride))
+        indices = [
+            candidate_indices[idx]
+            for idx in relative_indices
+            if 0 <= idx < len(candidate_indices)
+        ]
     if not indices:
         raise ValueError("No valid sample indices were selected.")
     return indices
@@ -304,7 +342,8 @@ def main():
         split=args.split,
         preprocessed_root=args.preprocessed_root,
     )
-    indices = make_indices(args, len(dataset))
+    candidate_indices = action_filtered_indices(dataset, args.action, args.sequence)
+    indices = make_indices(args, len(dataset), candidate_indices)
     samples = [dataset[idx] for idx in indices]
     inputs = torch.stack([sample["input_wifi-csi"] for sample in samples], dim=0)
     gt_pose = torch.stack([sample["output"] for sample in samples], dim=0).numpy()
@@ -353,6 +392,8 @@ def main():
         "dataset_root": str(Path(args.dataset_root).expanduser()),
         "preprocessed_root": str(Path(args.preprocessed_root).expanduser()) if args.preprocessed_root else None,
         "split": args.split,
+        "action": args.action,
+        "sequence": args.sequence,
         "indices": indices,
         "device": str(device),
         "metric_scale": args.metric_scale,
