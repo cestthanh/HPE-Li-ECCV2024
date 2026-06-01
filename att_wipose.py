@@ -86,8 +86,12 @@ n_epochs_decay = 30
 epoch_count = 1
 scheduler = torch.optim.lr_scheduler.LambdaLR(
     optimizer,
-    lr_lambda=lambda epoch: 1.0
-    - max(0, epoch + epoch_count - n_epochs) / float(n_epochs_decay + 1),
+    lr_lambda=lambda epoch: max(
+        0.0,
+        1.0
+        - max(0, epoch + epoch_count - n_epochs)
+        / float(n_epochs_decay + 1),
+    ),
 )
 
 num_epochs = experiment_config["epoch"]
