@@ -98,7 +98,7 @@ for epoch_index in tqdm(range(num_epochs)):
         loss.backward(retain_graph=True)
         optimizer.step()
 
-        lr = np.array(scheduler.get_last_lr())
+        lr = scheduler.get_last_lr()[0]
         message = "(epoch: %d, iters: %d, lr: %.5f, loss: %.3f) " % (
             epoch_index,
             idx * 32,
@@ -203,7 +203,8 @@ pck_20_iter = []
 pck_10_iter = []
 pck_5_iter = []
 metafi = torch.load(
-    os.path.join(experiment_config["checkpoint"], "att_wipose", "best.pt")
+    os.path.join(experiment_config["checkpoint"], "att_wipose", "best.pt"),
+    weights_only=False,
 )
 with torch.no_grad():
     for i, data in enumerate(test_loader):
