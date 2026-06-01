@@ -13,7 +13,7 @@ import yaml
 from sklearn.model_selection import train_test_split
 from tabulate import tabulate
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from constant import experiment_config
@@ -25,25 +25,59 @@ WIPOSE_DATASET_ROOT = os.getenv(
     "WIPOSE_DATASET_ROOT",
     "/home/research02/student1409/Wifi-HPE/data/wipose",
 )
+WIPOSE_PREPROCESSED_ROOT = os.getenv("WIPOSE_PREPROCESSED_ROOT")
+TRAIN_BATCH_SIZE = int(os.getenv("WIPOSE_TRAIN_BATCH_SIZE", "128"))
+VAL_BATCH_SIZE = int(os.getenv("WIPOSE_VAL_BATCH_SIZE", "64"))
+TEST_BATCH_SIZE = int(os.getenv("WIPOSE_TEST_BATCH_SIZE", "1"))
+NUM_WORKERS = int(os.getenv("WIPOSE_NUM_WORKERS", "8"))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def make_loader(dataset, batch_size, shuffle, drop_last=False):
+    loader_kwargs = {}
+    if NUM_WORKERS > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 2
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=drop_last,
+        num_workers=NUM_WORKERS,
+        pin_memory=device.type == "cuda",
+        **loader_kwargs,
+    )
 
 train_dataset, test_dataset = WiPoseDataset(
-    root_dir=WIPOSE_DATASET_ROOT
+    root_dir=WIPOSE_DATASET_ROOT,
+    preprocessed_root=WIPOSE_PREPROCESSED_ROOT,
 ), WiPoseDataset(
-    root_dir=WIPOSE_DATASET_ROOT, split="Test"
+    root_dir=WIPOSE_DATASET_ROOT,
+    split="Test",
+    preprocessed_root=WIPOSE_PREPROCESSED_ROOT,
 )
-val_data, test_data = train_test_split(
-    test_dataset, test_size=0.5, random_state=41
+val_indices, test_indices = train_test_split(
+    list(range(len(test_dataset))), test_size=0.5, random_state=41
 )
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = DataLoader(val_data, batch_size=32, shuffle=False)
-test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+val_data = Subset(test_dataset, val_indices)
+test_data = Subset(test_dataset, test_indices)
+train_loader = make_loader(
+    train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=True
+)
+val_loader = make_loader(val_data, batch_size=VAL_BATCH_SIZE, shuffle=False)
+test_loader = make_loader(test_data, batch_size=TEST_BATCH_SIZE, shuffle=False)
+print(
+    f"wipose_root={WIPOSE_DATASET_ROOT}, preprocessed_root={WIPOSE_PREPROCESSED_ROOT}, "
+    f"train_samples={len(train_dataset)}, val_samples={len(val_data)}, test_samples={len(test_data)}, "
+    f"device={device}, train_batch={TRAIN_BATCH_SIZE}, val_batch={VAL_BATCH_SIZE}, workers={NUM_WORKERS}",
+    flush=True,
+)
 
 torch.cuda.empty_cache()
 
 metafi = HPEWiPoseModel().to(device)
 
-criterion_L2 = nn.MSELoss().cuda()
+criterion_L2 = nn.MSELoss().to(device)
 optimizer = torch.optim.AdamW(metafi.parameters(), lr=0.001)
 n_epochs = 20
 n_epochs_decay = 30
@@ -63,27 +97,19 @@ time_iter = []
 print(metafi._get_name() + "\n")
 torch.cuda.empty_cache()
 for epoch_index in tqdm(range(num_epochs)):
-    torch.cuda.empty_cache()
     loss = 0
     train_loss_iter = []
     metric = []
     metafi.train()
     relation_mean = []
     for idx, data in enumerate(train_loader):
-        torch.cuda.empty_cache()
-        csi_data = data["input_wifi-csi"]
-        csi_data = csi_data.numpy()
-        csi_data = torch.tensor(csi_data)
-        csi_data = csi_data.cuda()
-        csi_data = csi_data.type(torch.cuda.FloatTensor)
-        keypoint = data["output"]
-        keypoint = keypoint.cuda()
+        csi_data = data["input_wifi-csi"].to(device, non_blocking=True).float()
+        keypoint = data["output"].to(device, non_blocking=True).float()
 
-        xy_keypoint = keypoint[:, :, 0:2].cuda()
-        confidence = keypoint[:, :, 2:3].cuda()
+        xy_keypoint = keypoint[:, :, 0:2]
+        confidence = keypoint[:, :, 2:3]
 
         pred_xy_keypoint, time = metafi(csi_data)  # b,2,17,17
-        pred_xy_keypoint = pred_xy_keypoint.squeeze()
         loss = (
             criterion_L2(
                 torch.mul(confidence, pred_xy_keypoint),
@@ -118,18 +144,13 @@ for epoch_index in tqdm(range(num_epochs)):
     pck_20_iter = []
     with torch.no_grad():
         for idx, data in enumerate(val_loader):
-            torch.cuda.empty_cache()
-            csi_data = data["input_wifi-csi"]
-            csi_data = csi_data.numpy()
-            csi_data = torch.tensor(csi_data)
-            csi_data = csi_data.cuda()
-            csi_data = csi_data.type(torch.cuda.FloatTensor)
+            csi_data = data["input_wifi-csi"].to(device, non_blocking=True).float()
 
             keypoint = data["output"]  # 17,3
-            keypoint = keypoint.cuda()
+            keypoint = keypoint.to(device, non_blocking=True).float()
 
-            xy_keypoint = keypoint[:, :, 0:2].cuda()
-            confidence = keypoint[:, :, 2:3].cuda()
+            xy_keypoint = keypoint[:, :, 0:2]
+            confidence = keypoint[:, :, 2:3]
 
             pred_xy_keypoint, time = metafi(csi_data)  # 4,2,17,17
             loss = criterion_L2(
@@ -191,7 +212,7 @@ for epoch_index in tqdm(range(num_epochs)):
             print(train_mean_loss_iter)
 
 epsilon = 0.4
-criterion_L2 = nn.MSELoss()
+criterion_L2 = nn.MSELoss().to(device)
 loss = 0
 test_loss_iter = []
 metric = []
@@ -206,33 +227,17 @@ metafi = torch.load(
     os.path.join(experiment_config["checkpoint"], "att_wipose", "best.pt"),
     weights_only=False,
 )
+metafi = metafi.to(device)
+metafi.eval()
 with torch.no_grad():
     for i, data in enumerate(test_loader):
-        torch.cuda.empty_cache()
-        csi_data = data["input_wifi-csi"]
-        # csi_data = torch.mean(csi_data, dim =2)
-        scale = 6
-        length_test = 27
-
-        csi_data = csi_data.clone().detach().requires_grad_(True)
-        csi_data = csi_data.cuda()
-        csi_data = csi_data.type(torch.cuda.FloatTensor)
+        csi_data = data["input_wifi-csi"].to(device, non_blocking=True).float()
         # csi_dafeaturesta = csi_data.view(16,2,3,114,10)
         keypoint = data["output"]  # 17,3
-        keypoint = keypoint.cuda()
+        keypoint = keypoint.to(device, non_blocking=True).float()
 
-        xy_keypoint = keypoint[:, :, 0:2].cuda()
-        confidence = keypoint[:, :, 2:3].cuda()
-
-        # add noise and denoise
-
-        csi_data = csi_data.to("cpu").numpy()
-
-        csi_data = torch.tensor(csi_data)
-
-        csi_data = torch.tensor(csi_data)
-        csi_data = csi_data.to("cuda")
-        csi_data = csi_data.type(torch.cuda.FloatTensor)
+        xy_keypoint = keypoint[:, :, 0:2]
+        confidence = keypoint[:, :, 2:3]
 
         pred_xy_keypoint, time = metafi(csi_data)  # b,2,17,17
 
