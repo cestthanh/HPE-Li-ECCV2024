@@ -30,6 +30,7 @@ TRAIN_BATCH_SIZE = int(os.getenv("WIPOSE_TRAIN_BATCH_SIZE", "128"))
 VAL_BATCH_SIZE = int(os.getenv("WIPOSE_VAL_BATCH_SIZE", "64"))
 TEST_BATCH_SIZE = int(os.getenv("WIPOSE_TEST_BATCH_SIZE", "1"))
 NUM_WORKERS = int(os.getenv("WIPOSE_NUM_WORKERS", "8"))
+DROP_LAST = os.getenv("WIPOSE_DROP_LAST", "0").lower() in {"1", "true", "yes"}
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -62,14 +63,15 @@ val_indices, test_indices = train_test_split(
 val_data = Subset(test_dataset, val_indices)
 test_data = Subset(test_dataset, test_indices)
 train_loader = make_loader(
-    train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=True
+    train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=DROP_LAST
 )
 val_loader = make_loader(val_data, batch_size=VAL_BATCH_SIZE, shuffle=False)
 test_loader = make_loader(test_data, batch_size=TEST_BATCH_SIZE, shuffle=False)
 print(
     f"wipose_root={WIPOSE_DATASET_ROOT}, preprocessed_root={WIPOSE_PREPROCESSED_ROOT}, "
     f"train_samples={len(train_dataset)}, val_samples={len(val_data)}, test_samples={len(test_data)}, "
-    f"device={device}, train_batch={TRAIN_BATCH_SIZE}, val_batch={VAL_BATCH_SIZE}, workers={NUM_WORKERS}",
+    f"device={device}, train_batch={TRAIN_BATCH_SIZE}, val_batch={VAL_BATCH_SIZE}, "
+    f"workers={NUM_WORKERS}, drop_last={DROP_LAST}",
     flush=True,
 )
 
