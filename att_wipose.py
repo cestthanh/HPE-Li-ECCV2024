@@ -21,10 +21,15 @@ from model import *
 from utils import calulate_error, compute_pck_pckh_18
 from wipose import WiPoseDataset
 
+WIPOSE_DATASET_ROOT = os.getenv(
+    "WIPOSE_DATASET_ROOT",
+    "/home/research02/student1409/Wifi-HPE/data/wipose",
+)
+
 train_dataset, test_dataset = WiPoseDataset(
-    root_dir="/home/jackson-devworks/Desktop/HPE/Wi-Pose"
+    root_dir=WIPOSE_DATASET_ROOT
 ), WiPoseDataset(
-    root_dir="/home/jackson-devworks/Desktop/HPE/Wi-Pose", split="Test"
+    root_dir=WIPOSE_DATASET_ROOT, split="Test"
 )
 val_data, test_data = train_test_split(
     test_dataset, test_size=0.5, random_state=41
