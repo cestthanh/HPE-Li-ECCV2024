@@ -4,6 +4,8 @@
 **.pt
 __pycache__/
 .venv/
+.local_tools/
+.python311-embed/
 data/
 output/
 ckpt/
@@ -18,5 +20,6 @@ checkpoints/phase_b_*_package/*.json
 assets/images/*.jpg
 assets/figures/*.png
 assets/figures/*.pdf
+HPE-Li.pdf
 output.txt
 output copy.txt
