@@ -20,8 +20,8 @@ class OriginalHPE3D(nn.Module):
             dim2=10,
             pool_dim="freq-chan",
             M=4,
-            G=1,
-            r=4,
+            G=32,
+            r=32,
             stride=1,
             L=32,
         )
@@ -33,8 +33,8 @@ class OriginalHPE3D(nn.Module):
             dim2=8,
             pool_dim="freq-chan",
             M=4,
-            G=1,
-            r=4,
+            G=32,
+            r=32,
             stride=1,
             L=32,
         )
