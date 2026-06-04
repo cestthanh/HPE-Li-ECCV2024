@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dataset_lib import make_dataloader, make_dataset
-from model import OriginalHPE3D
+from model import OriginalHPE3D, get_hpe3d_model_config
 from utils.eval_3d import MMFI_17_JOINT_NAMES, compute_3d_metrics
 
 
@@ -138,13 +138,15 @@ def make_eval_loader(dataset_root, config, args):
 
 
 def load_model(checkpoint, device):
-    model = OriginalHPE3D().to(device)
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
+        state_dict = checkpoint["model_state_dict"]
     else:
         raise ValueError(
             "Unsupported checkpoint format. Expected a dict with model_state_dict."
         )
+    model_config = get_hpe3d_model_config(checkpoint, state_dict=state_dict)
+    model = OriginalHPE3D(**model_config).to(device)
+    model.load_state_dict(state_dict)
     model.eval()
     return model
 
@@ -253,6 +255,7 @@ def main():
     metrics["dataset_root"] = args.dataset_root
     metrics["split_to_use"] = config["split_to_use"]
     metrics["eval_split"] = args.eval_split
+    metrics["model_config"] = model.get_model_config()
     metrics["pose_normalization"] = pose_stats
 
     output_json = (
@@ -285,7 +288,8 @@ def main():
     print(
         "eval_split=%s samples=%d mpjpe=%.3f pa_mpjpe=%.3f "
         "pck50mm=%.3f pck100mm=%.3f g_PCK@10=%.3f g_PCK@20=%.3f "
-        "g_PCK@30=%.3f g_PCK@40=%.3f g_PCK@50=%.3f normalize_pose=%s"
+        "g_PCK@30=%.3f g_PCK@40=%.3f g_PCK@50=%.3f normalize_pose=%s "
+        "model_config=%s"
         % (
             args.eval_split,
             len(selected_dataset),
@@ -299,12 +303,27 @@ def main():
             metrics["g_PCK@40"],
             metrics["g_PCK@50"],
             pose_stats.get("enabled", False),
+            model.get_model_config(),
         ),
         flush=True,
     )
     print(f"saved_json={output_json}", flush=True)
     print(f"saved_md={output_md}", flush=True)
     print(f"saved_graphpose_md={output_graphpose_md}", flush=True)
+    print(
+        "collapse_diagnostics: axis_mae_mm=%s root_mpjpe=%.3f "
+        "root_centered_mpjpe=%.3f constant_mean_pose_mpjpe=%.3f "
+        "constant_mean_pose_pa_mpjpe=%.3f pa_gain_over_constant=%.3f"
+        % (
+            metrics["axis_mae_mm_by_name"],
+            metrics["root_mpjpe_mm"],
+            metrics["root_centered_mpjpe_mm"],
+            metrics["constant_mean_pose_mpjpe_mm"],
+            metrics["constant_mean_pose_pa_mpjpe_mm"],
+            metrics["pa_mpjpe_gain_over_constant_mean_pose_mm"],
+        ),
+        flush=True,
+    )
     print(graphpose_table, flush=True)
     print(make_markdown_table(metrics), flush=True)
 

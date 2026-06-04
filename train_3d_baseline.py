@@ -399,6 +399,7 @@ def save_checkpoint(path, model, optimizer, epoch, config, args, metrics):
     torch.save(
         {
             "model_name": "OriginalHPE3D",
+            "model_config": model.get_model_config(),
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
@@ -461,6 +462,7 @@ def main():
     pose_stats_tensors = make_pose_stats_tensors(pose_stats, device)
 
     model = OriginalHPE3D().to(device)
+    print(f"model_config={model.get_model_config()}", flush=True)
     criterion = make_criterion(args).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -523,6 +525,19 @@ def main():
                 val_metrics["g_PCK@40"],
                 val_metrics["g_PCK@50"],
                 val_metrics["pa_mpjpe_invalid_count"],
+            ),
+            flush=True,
+        )
+        print(
+            "val collapse diagnostics: axis_mae_mm=%s root_mpjpe=%.3f "
+            "root_centered_mpjpe=%.3f constant_mean_pose_mpjpe=%.3f "
+            "pa_gain_over_constant=%.3f"
+            % (
+                val_metrics["axis_mae_mm_by_name"],
+                val_metrics["root_mpjpe_mm"],
+                val_metrics["root_centered_mpjpe_mm"],
+                val_metrics["constant_mean_pose_mpjpe_mm"],
+                val_metrics["pa_mpjpe_gain_over_constant_mean_pose_mm"],
             ),
             flush=True,
         )
@@ -599,6 +614,7 @@ def main():
         "best_epoch": best_epoch,
         "best_val_mpjpe_mm": best_val_mpjpe,
         "stopped_early": stopped_early,
+        "model_config": model.get_model_config(),
         "pose_normalization": pose_stats,
         "history": history,
     }
@@ -633,6 +649,19 @@ def main():
                 test_metrics["g_PCK@40"],
                 test_metrics["g_PCK@50"],
                 test_metrics["pa_mpjpe_invalid_count"],
+            ),
+            flush=True,
+        )
+        print(
+            "test collapse diagnostics: axis_mae_mm=%s root_mpjpe=%.3f "
+            "root_centered_mpjpe=%.3f constant_mean_pose_mpjpe=%.3f "
+            "pa_gain_over_constant=%.3f"
+            % (
+                test_metrics["axis_mae_mm_by_name"],
+                test_metrics["root_mpjpe_mm"],
+                test_metrics["root_centered_mpjpe_mm"],
+                test_metrics["constant_mean_pose_mpjpe_mm"],
+                test_metrics["pa_mpjpe_gain_over_constant_mean_pose_mm"],
             ),
             flush=True,
         )

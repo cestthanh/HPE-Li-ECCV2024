@@ -491,7 +491,10 @@
         slider.max = gt.num_frames - 1;
         const seqMpjpe = diagnostics?.mpjpe_mm == null ? '' : ` | seq MPJPE ${diagnostics.mpjpe_mm.toFixed(1)} mm`;
         const corr = diagnostics?.temporal_correlation?.mean == null ? '' : ` | corr ${diagnostics.temporal_correlation.mean.toFixed(2)}`;
-        pathInfo.textContent = (cfg.paths.checkpoint || '') + seqMpjpe + corr;
+        const zMae = diagnostics?.axis_mae_mm_by_name?.z == null ? '' : ` | Z MAE ${diagnostics.axis_mae_mm_by_name.z.toFixed(1)} mm`;
+        const articulation = diagnostics?.articulation_motion_ratios?.mean_step_ratio == null ? '' : ` | articulation ${diagnostics.articulation_motion_ratios.mean_step_ratio.toFixed(2)}x`;
+        pathInfo.textContent = (cfg.paths.checkpoint || '') + seqMpjpe + zMae + articulation + corr;
+        pathInfo.title = diagnostics?.warnings?.join(' | ') || pathInfo.textContent;
 
         gtViewer = new PoseViewer('gt-viewer', cfg.gt_joint_colors, cfg.gt_edge_colors);
         predViewer = new PoseViewer('pred-viewer', cfg.pred_joint_colors, cfg.pred_edge_colors);

@@ -20,7 +20,7 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from model import OriginalHPE3D
+from model import OriginalHPE3D, get_hpe3d_model_config
 from utils.eval_3d import compute_3d_metrics
 
 
@@ -304,7 +304,8 @@ def load_model(checkpoint_path, device):
         return model, checkpoint
 
     state_dict = strip_module_prefix(extract_state_dict(checkpoint))
-    model = OriginalHPE3D().to(device)
+    model_config = get_hpe3d_model_config(checkpoint, state_dict=state_dict)
+    model = OriginalHPE3D(**model_config).to(device)
     model.load_state_dict(state_dict)
     model.eval()
     return model, checkpoint
@@ -497,6 +498,7 @@ def compute_mpjpe_frames_mm(pred_pose, gt_pose, output_dims):
 
 def compute_temporal_correlation(pred_pose, gt_pose):
     correlations = []
+    correlations_by_axis = [[], [], []]
     count = min(len(pred_pose), len(gt_pose))
     pred_pose = np.asarray(pred_pose[:count], dtype=np.float64)
     gt_pose = np.asarray(gt_pose[:count], dtype=np.float64)
@@ -510,27 +512,150 @@ def compute_temporal_correlation(pred_pose, gt_pose):
             corr = np.corrcoef(gt_series, pred_series)[0, 1]
             if np.isfinite(corr):
                 correlations.append(float(corr))
+                correlations_by_axis[coord_idx].append(float(corr))
 
     if not correlations:
-        return {"mean": None, "median": None, "count": 0}
+        return {
+            "mean": None,
+            "median": None,
+            "count": 0,
+            "by_axis": {
+                axis: {"mean": None, "median": None, "count": 0}
+                for axis in ("x", "y", "z")
+            },
+        }
+
+    by_axis = {}
+    for axis, axis_correlations in zip(("x", "y", "z"), correlations_by_axis):
+        by_axis[axis] = {
+            "mean": float(np.mean(axis_correlations)) if axis_correlations else None,
+            "median": float(np.median(axis_correlations))
+            if axis_correlations
+            else None,
+            "count": int(len(axis_correlations)),
+        }
     return {
         "mean": float(np.mean(correlations)),
         "median": float(np.median(correlations)),
         "count": int(len(correlations)),
+        "by_axis": by_axis,
     }
 
 
 def compute_motion_summary(pose):
     pose = np.asarray(pose, dtype=np.float64)
     if len(pose) < 2:
-        return {"mean_mm": 0.0, "median_mm": 0.0, "p95_mm": 0.0, "max_mm": 0.0}
-    step_mm = np.linalg.norm(np.diff(pose, axis=0), axis=-1) * 1000.0
+        zero_axes = {axis: 0.0 for axis in ("x", "y", "z")}
+        return {
+            "mean_mm": 0.0,
+            "median_mm": 0.0,
+            "p95_mm": 0.0,
+            "max_mm": 0.0,
+            "axis_mean_abs_mm": zero_axes,
+            "axis_p95_abs_mm": zero_axes,
+        }
+    delta_mm = np.diff(pose, axis=0) * 1000.0
+    step_mm = np.linalg.norm(delta_mm, axis=-1)
+    axis_mean_abs = np.mean(np.abs(delta_mm), axis=(0, 1))
+    axis_p95_abs = np.percentile(np.abs(delta_mm), 95, axis=(0, 1))
     return {
         "mean_mm": float(np.mean(step_mm)),
         "median_mm": float(np.median(step_mm)),
         "p95_mm": float(np.percentile(step_mm, 95)),
         "max_mm": float(np.max(step_mm)),
+        "axis_mean_abs_mm": {
+            axis: float(value)
+            for axis, value in zip(("x", "y", "z"), axis_mean_abs)
+        },
+        "axis_p95_abs_mm": {
+            axis: float(value)
+            for axis, value in zip(("x", "y", "z"), axis_p95_abs)
+        },
     }
+
+
+def compute_temporal_std_summary(pose):
+    pose = np.asarray(pose, dtype=np.float64)
+    per_joint_axis_std_mm = pose.std(axis=0) * 1000.0
+    root_axis_std_mm = pose[:, 0, :].std(axis=0) * 1000.0
+    return {
+        "joint_mean_axis_std_mm": {
+            axis: float(value)
+            for axis, value in zip(
+                ("x", "y", "z"), per_joint_axis_std_mm.mean(axis=0)
+            )
+        },
+        "joint_median_axis_std_mm": {
+            axis: float(value)
+            for axis, value in zip(
+                ("x", "y", "z"), np.median(per_joint_axis_std_mm, axis=0)
+            )
+        },
+        "root_axis_std_mm": {
+            axis: float(value)
+            for axis, value in zip(("x", "y", "z"), root_axis_std_mm)
+        },
+    }
+
+
+def safe_ratio(numerator, denominator, eps=1e-3):
+    if abs(denominator) <= eps:
+        return None
+    return float(numerator / denominator)
+
+
+def make_motion_ratios(pred_motion, gt_motion, pred_std, gt_std):
+    axis_motion_ratio = {
+        axis: safe_ratio(
+            pred_motion["axis_mean_abs_mm"][axis],
+            gt_motion["axis_mean_abs_mm"][axis],
+        )
+        for axis in ("x", "y", "z")
+    }
+    axis_temporal_std_ratio = {
+        axis: safe_ratio(
+            pred_std["joint_mean_axis_std_mm"][axis],
+            gt_std["joint_mean_axis_std_mm"][axis],
+        )
+        for axis in ("x", "y", "z")
+    }
+    return {
+        "mean_step_ratio": safe_ratio(pred_motion["mean_mm"], gt_motion["mean_mm"]),
+        "axis_mean_abs_step_ratio": axis_motion_ratio,
+        "axis_temporal_std_ratio": axis_temporal_std_ratio,
+    }
+
+
+def make_diagnostic_warnings(
+    metrics, temporal_corr, ratios, gt_std, articulation_ratios=None
+):
+    warnings_out = []
+    if metrics["mpjpe_gain_over_constant_mean_pose_mm"] <= 0:
+        warnings_out.append(
+            "Prediction MPJPE is not better than a constant sequence-mean pose."
+        )
+    if temporal_corr["mean"] is not None and temporal_corr["mean"] < 0.25:
+        warnings_out.append(
+            "Mean coordinate temporal correlation is below 0.25."
+        )
+    if ratios["mean_step_ratio"] is not None and ratios["mean_step_ratio"] < 0.25:
+        warnings_out.append("Predicted mean frame-to-frame motion is below 25% of GT.")
+    if (
+        articulation_ratios is not None
+        and articulation_ratios["mean_step_ratio"] is not None
+        and articulation_ratios["mean_step_ratio"] < 0.25
+    ):
+        warnings_out.append(
+            "Predicted root-centered articulation motion is below 25% of GT."
+        )
+    for axis in ("x", "y", "z"):
+        gt_axis_std = gt_std["joint_mean_axis_std_mm"][axis]
+        ratio = ratios["axis_temporal_std_ratio"][axis]
+        if gt_axis_std >= 5.0 and ratio is not None and ratio < 0.25:
+            warnings_out.append(
+                f"Predicted {axis.upper()} temporal variation is below 25% of GT."
+            )
+    return warnings_out
 
 
 def compute_constant_pose_mpjpe_mm(reference_pose, gt_pose):
@@ -557,8 +682,28 @@ def compute_demo_diagnostics(pred_pose, gt_pose, output_dims):
     root_centered_mpjpe = (
         np.linalg.norm(root_centered_pred - root_centered_gt, axis=-1).mean() * 1000.0
     )
+    temporal_correlation = compute_temporal_correlation(pred_for_metrics, gt_pose)
+    gt_motion = compute_motion_summary(gt_pose)
+    pred_motion = compute_motion_summary(pred_for_metrics)
+    gt_temporal_std = compute_temporal_std_summary(gt_pose)
+    pred_temporal_std = compute_temporal_std_summary(pred_for_metrics)
+    motion_ratios = make_motion_ratios(
+        pred_motion, gt_motion, pred_temporal_std, gt_temporal_std
+    )
+    gt_root_motion = compute_motion_summary(gt_pose[:, 0:1, :])
+    pred_root_motion = compute_motion_summary(pred_for_metrics[:, 0:1, :])
+    gt_articulation_motion = compute_motion_summary(root_centered_gt)
+    pred_articulation_motion = compute_motion_summary(root_centered_pred)
+    gt_articulation_std = compute_temporal_std_summary(root_centered_gt)
+    pred_articulation_std = compute_temporal_std_summary(root_centered_pred)
+    articulation_motion_ratios = make_motion_ratios(
+        pred_articulation_motion,
+        gt_articulation_motion,
+        pred_articulation_std,
+        gt_articulation_std,
+    )
 
-    return {
+    diagnostics = {
         "num_frames": int(count),
         "metric_mode": "xy_with_gt_z" if output_dims == 2 else "xyz",
         "mpjpe_mm": float(metrics["mpjpe_mm"]),
@@ -566,20 +711,45 @@ def compute_demo_diagnostics(pred_pose, gt_pose, output_dims):
         "pck_50mm": float(metrics["pck_50mm"]),
         "pck_100mm": float(metrics["pck_100mm"]),
         "root_centered_mpjpe_mm": float(root_centered_mpjpe),
-        "temporal_correlation": compute_temporal_correlation(pred_for_metrics, gt_pose),
-        "gt_motion": compute_motion_summary(gt_pose),
-        "pred_motion": compute_motion_summary(pred_for_metrics),
+        "root_mpjpe_mm": float(metrics["root_mpjpe_mm"]),
+        "axis_mae_mm_by_name": metrics["axis_mae_mm_by_name"],
+        "root_axis_mae_mm_by_name": metrics["root_axis_mae_mm_by_name"],
+        "temporal_correlation": temporal_correlation,
+        "gt_motion": gt_motion,
+        "pred_motion": pred_motion,
+        "gt_temporal_std": gt_temporal_std,
+        "pred_temporal_std": pred_temporal_std,
+        "motion_ratios": motion_ratios,
+        "gt_root_motion": gt_root_motion,
+        "pred_root_motion": pred_root_motion,
+        "gt_articulation_motion": gt_articulation_motion,
+        "pred_articulation_motion": pred_articulation_motion,
+        "articulation_motion_ratios": articulation_motion_ratios,
         "constant_first_gt_mpjpe_mm": compute_constant_pose_mpjpe_mm(
             gt_pose[0:1], gt_pose
         ),
-        "constant_sequence_mean_gt_mpjpe_mm": compute_constant_pose_mpjpe_mm(
-            gt_pose.mean(axis=0, keepdims=True), gt_pose
+        "constant_sequence_mean_gt_mpjpe_mm": float(
+            metrics["constant_mean_pose_mpjpe_mm"]
+        ),
+        "mpjpe_gain_over_constant_sequence_mean_mm": float(
+            metrics["mpjpe_gain_over_constant_mean_pose_mm"]
+        ),
+        "pa_mpjpe_gain_over_constant_sequence_mean_mm": float(
+            metrics["pa_mpjpe_gain_over_constant_mean_pose_mm"]
         ),
         "pred_coord_min": pred_for_metrics.reshape(-1, 3).min(axis=0).astype(float).tolist(),
         "pred_coord_max": pred_for_metrics.reshape(-1, 3).max(axis=0).astype(float).tolist(),
         "gt_coord_min": gt_pose.reshape(-1, 3).min(axis=0).astype(float).tolist(),
         "gt_coord_max": gt_pose.reshape(-1, 3).max(axis=0).astype(float).tolist(),
     }
+    diagnostics["warnings"] = make_diagnostic_warnings(
+        metrics,
+        temporal_correlation,
+        motion_ratios,
+        gt_temporal_std,
+        articulation_ratios=articulation_motion_ratios,
+    )
+    return diagnostics
 
 
 def load_demo_payload(args):
@@ -634,6 +804,9 @@ def load_demo_payload(args):
             "checkpoint": str(Path(args.checkpoint)),
             "device": str(device),
             "model_class": model.__class__.__name__,
+            "model_config": model.get_model_config()
+            if hasattr(model, "get_model_config")
+            else {},
             "model_output_dims": int(output_dims),
             "metric_mode": "xy_mpjpe_mm" if output_dims == 2 else "xyz_mpjpe_mm",
         },
@@ -873,13 +1046,24 @@ def main():
             "motion: "
             f"gt_mean_step={diagnostics['gt_motion']['mean_mm']:.1f}mm, "
             f"pred_mean_step={diagnostics['pred_motion']['mean_mm']:.1f}mm, "
+            f"step_ratio={diagnostics['motion_ratios']['mean_step_ratio']}, "
+            f"articulation_ratio={diagnostics['articulation_motion_ratios']['mean_step_ratio']}, "
             f"coord_corr_mean={temporal_corr['mean']}"
+        )
+        print(
+            "axis diagnostics: "
+            f"mae_mm={diagnostics['axis_mae_mm_by_name']}, "
+            f"temporal_std_ratio={diagnostics['motion_ratios']['axis_temporal_std_ratio']}, "
+            f"axis_corr={temporal_corr['by_axis']}"
         )
         print(
             "constant baselines: "
             f"first_gt={diagnostics['constant_first_gt_mpjpe_mm']:.1f}mm, "
-            f"sequence_mean_gt={diagnostics['constant_sequence_mean_gt_mpjpe_mm']:.1f}mm"
+            f"sequence_mean_gt={diagnostics['constant_sequence_mean_gt_mpjpe_mm']:.1f}mm, "
+            f"model_gain={diagnostics['mpjpe_gain_over_constant_sequence_mean_mm']:.1f}mm"
         )
+        if diagnostics["warnings"]:
+            print("warnings: " + " | ".join(diagnostics["warnings"]))
         return
 
     http.server.ThreadingHTTPServer.allow_reuse_address = True

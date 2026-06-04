@@ -22,6 +22,7 @@ MMFI_17_JOINT_NAMES = [
     "R.Elbow",
     "R.Hand",
 ]
+XYZ_AXIS_NAMES = ("x", "y", "z")
 
 GRAPHPOSE_PCK_THRESHOLDS = (0.1, 0.2, 0.3, 0.4, 0.5)
 GRAPHPOSE_MMFI_SCALE_JOINTS = (5, 12)
@@ -151,6 +152,7 @@ def pa_mpjpe_mm(pred_xyz, gt_xyz, return_invalid_count=False):
 
 
 def compute_3d_metrics(pred_xyz, gt_xyz):
+    pred_xyz, gt_xyz = _validate_pose_arrays(pred_xyz, gt_xyz)
     per_joint = per_joint_mpjpe_mm(pred_xyz, gt_xyz)
     per_joint_by_name = {
         name: value for name, value in zip(MMFI_17_JOINT_NAMES, per_joint)
@@ -158,6 +160,37 @@ def compute_3d_metrics(pred_xyz, gt_xyz):
     pa_mpjpe, invalid_count = pa_mpjpe_mm(
         pred_xyz, gt_xyz, return_invalid_count=True
     )
+    axis_mae = np.mean(np.abs(pred_xyz - gt_xyz), axis=(0, 1)) * 1000.0
+    root_axis_mae = np.mean(
+        np.abs(pred_xyz[:, 0, :] - gt_xyz[:, 0, :]), axis=0
+    ) * 1000.0
+    root_mpjpe = (
+        np.linalg.norm(pred_xyz[:, 0, :] - gt_xyz[:, 0, :], axis=-1).mean()
+        * 1000.0
+    )
+    root_centered_pred = pred_xyz - pred_xyz[:, 0:1, :]
+    root_centered_gt = gt_xyz - gt_xyz[:, 0:1, :]
+    root_centered_mpjpe = (
+        np.linalg.norm(root_centered_pred - root_centered_gt, axis=-1).mean()
+        * 1000.0
+    )
+
+    pred_coord_std = pred_xyz.reshape(-1, 3).std(axis=0) * 1000.0
+    gt_coord_std = gt_xyz.reshape(-1, 3).std(axis=0) * 1000.0
+    coord_std_ratio = np.divide(
+        pred_coord_std,
+        gt_coord_std,
+        out=np.full(3, np.nan, dtype=np.float64),
+        where=gt_coord_std > 1e-8,
+    )
+
+    constant_mean_pose = np.broadcast_to(
+        gt_xyz.mean(axis=0, keepdims=True), gt_xyz.shape
+    )
+    constant_pa_mpjpe, constant_pa_invalid_count = pa_mpjpe_mm(
+        constant_mean_pose, gt_xyz, return_invalid_count=True
+    )
+    constant_mpjpe = mpjpe_mm(constant_mean_pose, gt_xyz)
     metrics = {
         "mpjpe_mm": mpjpe_mm(pred_xyz, gt_xyz),
         "pa_mpjpe_mm": pa_mpjpe,
@@ -166,9 +199,48 @@ def compute_3d_metrics(pred_xyz, gt_xyz):
         "per_joint_mpjpe_mm_by_name": per_joint_by_name,
         "pck_50mm": pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=50.0),
         "pck_100mm": pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=100.0),
+        "axis_mae_mm": axis_mae.astype(float).tolist(),
+        "axis_mae_mm_by_name": {
+            name: float(value) for name, value in zip(XYZ_AXIS_NAMES, axis_mae)
+        },
+        "root_mpjpe_mm": float(root_mpjpe),
+        "root_axis_mae_mm_by_name": {
+            name: float(value)
+            for name, value in zip(XYZ_AXIS_NAMES, root_axis_mae)
+        },
+        "root_centered_mpjpe_mm": float(root_centered_mpjpe),
+        "pred_coord_std_mm_by_name": {
+            name: float(value)
+            for name, value in zip(XYZ_AXIS_NAMES, pred_coord_std)
+        },
+        "gt_coord_std_mm_by_name": {
+            name: float(value) for name, value in zip(XYZ_AXIS_NAMES, gt_coord_std)
+        },
+        "coord_std_ratio_by_name": {
+            name: float(value)
+            for name, value in zip(XYZ_AXIS_NAMES, coord_std_ratio)
+        },
+        "constant_mean_pose_mpjpe_mm": float(constant_mpjpe),
+        "constant_mean_pose_pa_mpjpe_mm": float(constant_pa_mpjpe),
+        "constant_mean_pose_pa_invalid_count": int(constant_pa_invalid_count),
+        "mpjpe_gain_over_constant_mean_pose_mm": float(
+            constant_mpjpe - mpjpe_mm(pred_xyz, gt_xyz)
+        ),
+        "pa_mpjpe_gain_over_constant_mean_pose_mm": float(
+            constant_pa_mpjpe - pa_mpjpe
+        ),
+        "constant_mean_pose_pck_50mm": pck_3d_mm(
+            constant_mean_pose, gt_xyz, threshold_mm=50.0
+        ),
+        "constant_mean_pose_pck_100mm": pck_3d_mm(
+            constant_mean_pose, gt_xyz, threshold_mm=100.0
+        ),
         "g_PCK_scale_joints": list(GRAPHPOSE_MMFI_SCALE_JOINTS),
     }
     for threshold in GRAPHPOSE_PCK_THRESHOLDS:
         tag = int(round(threshold * 100))
         metrics[f"g_PCK@{tag}"] = graphpose_pck_mmfi(pred_xyz, gt_xyz, threshold)
+        metrics[f"constant_mean_pose_g_PCK@{tag}"] = graphpose_pck_mmfi(
+            constant_mean_pose, gt_xyz, threshold
+        )
     return metrics
