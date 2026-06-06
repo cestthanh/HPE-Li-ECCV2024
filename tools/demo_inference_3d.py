@@ -220,6 +220,25 @@ def parse_args():
         action="store_true",
         help="Skip MMFi per-frame CSI min-max normalization.",
     )
+    parser.add_argument(
+        "--sequence-loader",
+        default="auto",
+        choices=["auto", "dataset", "direct"],
+        help=(
+            "How to load the CSI/GT sequence. 'dataset' uses dataset_lib.MMFi_Dataset, "
+            "matching train/test preprocessing; 'direct' uses this demo's standalone "
+            "file loader. 'auto' uses the dataset loader for dataset-root based MMFi "
+            "sequences and direct loading for explicit --csi-path/--gt-path inputs."
+        ),
+    )
+    parser.add_argument(
+        "--check-loader-consistency",
+        action="store_true",
+        help=(
+            "Compare the standalone demo loader against dataset_lib.MMFi_Dataset and "
+            "report max absolute differences. Useful when debugging train/demo drift."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -463,6 +482,158 @@ def load_gt_sequence(path, max_frames=None):
     return gt
 
 
+def tensor_to_numpy(value):
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def should_use_dataset_sequence_loader(args):
+    if args.sequence_loader == "direct":
+        return False
+    if args.sequence_loader == "dataset":
+        if args.no_csi_normalize:
+            raise ValueError(
+                "--sequence-loader dataset cannot be combined with "
+                "--no-csi-normalize because MMFi_Dataset always applies train/test "
+                "CSI normalization."
+            )
+        return True
+
+    return (
+        not args.no_csi_normalize
+        and args.csi_path is None
+        and args.gt_path is None
+        and bool(args.dataset_root)
+        and bool(args.scene)
+        and bool(args.subject)
+        and bool(args.action)
+    )
+
+
+def load_sequence_with_direct_loader(args, csi_path, gt_path):
+    csi_sequence = load_csi_sequence(
+        csi_path,
+        normalize=not args.no_csi_normalize,
+        max_frames=args.max_frames,
+    )
+    gt_pose = load_gt_sequence(gt_path, max_frames=args.max_frames)
+    loader_info = {
+        "sequence_loader": "direct",
+        "sequence_loader_detail": "tools.demo_inference_3d direct file loader",
+        "csi_normalized": not args.no_csi_normalize,
+    }
+    return csi_sequence, gt_pose, loader_info
+
+
+def load_sequence_with_dataset_loader(args):
+    from dataset_lib.mmfi import MMFi_Database, MMFi_Dataset
+
+    if not args.dataset_root or not args.subject or not args.action:
+        raise ValueError(
+            "--sequence-loader dataset requires --dataset-root, --subject, and --action."
+        )
+
+    database = MMFi_Database(str(Path(args.dataset_root)))
+    dataset = MMFi_Dataset(
+        database,
+        data_unit="frame",
+        modality="wifi-csi",
+        split="demo",
+        data_form={args.subject: [args.action]},
+    )
+    if len(dataset) == 0:
+        raise FileNotFoundError(
+            f"No valid MMFi frames found for subject={args.subject} action={args.action}."
+        )
+
+    dataset_scene = dataset.data_list[0]["scene"]
+    if args.scene and args.scene != dataset_scene:
+        raise FileNotFoundError(
+            f"Subject {args.subject} belongs to scene {dataset_scene} in MMFi, "
+            f"but --scene {args.scene} was requested."
+        )
+
+    csi_frames = []
+    gt_frames = []
+    frame_indices = []
+    for dataset_idx in range(len(dataset)):
+        if args.max_frames is not None and len(csi_frames) >= args.max_frames:
+            break
+        sample = dataset[dataset_idx]
+        csi_frames.append(
+            np.asarray(sample["input_wifi-csi"], dtype=np.float32)
+        )
+        gt_frames.append(
+            np.asarray(tensor_to_numpy(sample["output"]), dtype=np.float32)[:, 0:3]
+        )
+        frame_indices.append(int(sample.get("idx", dataset_idx)))
+
+    if not csi_frames:
+        raise RuntimeError("No CSI frames were loaded by MMFi_Dataset.")
+
+    loader_info = {
+        "sequence_loader": "dataset",
+        "sequence_loader_detail": "dataset_lib.MMFi_Dataset(data_unit='frame')",
+        "csi_normalized": True,
+        "dataset_scene": dataset_scene,
+        "first_frame_idx": int(frame_indices[0]),
+        "last_frame_idx": int(frame_indices[-1]),
+        "num_valid_frames": int(len(csi_frames)),
+    }
+    return (
+        np.stack(csi_frames, axis=0).astype(np.float32),
+        np.stack(gt_frames, axis=0).astype(np.float32),
+        loader_info,
+    )
+
+
+def compute_loader_consistency(args, csi_path, gt_path):
+    if args.no_csi_normalize:
+        return {
+            "checked": False,
+            "reason": "--no-csi-normalize makes direct loading intentionally differ.",
+        }
+
+    try:
+        direct_csi, direct_gt, _ = load_sequence_with_direct_loader(
+            args, csi_path, gt_path
+        )
+        dataset_csi, dataset_gt, _ = load_sequence_with_dataset_loader(args)
+    except Exception as exc:
+        return {"checked": False, "error": str(exc)}
+
+    count = min(len(direct_csi), len(dataset_csi), len(direct_gt), len(dataset_gt))
+    if count == 0:
+        return {"checked": False, "reason": "No overlapping frames to compare."}
+
+    direct_csi = direct_csi[:count]
+    dataset_csi = dataset_csi[:count]
+    direct_gt = direct_gt[:count]
+    dataset_gt = dataset_gt[:count]
+
+    if direct_csi.shape != dataset_csi.shape or direct_gt.shape != dataset_gt.shape:
+        return {
+            "checked": True,
+            "num_compared_frames": int(count),
+            "shape_mismatch": {
+                "direct_csi": list(direct_csi.shape),
+                "dataset_csi": list(dataset_csi.shape),
+                "direct_gt": list(direct_gt.shape),
+                "dataset_gt": list(dataset_gt.shape),
+            },
+        }
+
+    return {
+        "checked": True,
+        "num_compared_frames": int(count),
+        "csi_max_abs_diff": float(np.max(np.abs(direct_csi - dataset_csi))),
+        "csi_mean_abs_diff": float(np.mean(np.abs(direct_csi - dataset_csi))),
+        "gt_max_abs_diff": float(np.max(np.abs(direct_gt - dataset_gt))),
+        "gt_mean_abs_diff": float(np.mean(np.abs(direct_gt - dataset_gt))),
+    }
+
+
 def run_inference(model, csi_sequence, device, batch_size, pose_stats_tensors):
     pred_chunks = []
     output_dims = None
@@ -632,7 +803,7 @@ def make_diagnostic_warnings(
     warnings_out = []
     if metrics["mpjpe_gain_over_constant_mean_pose_mm"] <= 0:
         warnings_out.append(
-            "Prediction MPJPE is not better than a constant sequence-mean pose."
+            "Prediction MPJPE is not better than an oracle constant sequence-mean pose."
         )
     if temporal_corr["mean"] is not None and temporal_corr["mean"] < 0.25:
         warnings_out.append(
@@ -756,15 +927,20 @@ def load_demo_payload(args):
     csi_path, gt_path, video_path = resolve_sequence_paths(args)
     device = resolve_device(args.device)
 
-    status("Loading CSI frames...")
-    csi_sequence = load_csi_sequence(
-        csi_path,
-        normalize=not args.no_csi_normalize,
-        max_frames=args.max_frames,
-    )
+    if should_use_dataset_sequence_loader(args):
+        status("Loading CSI/GT with MMFi dataset loader...")
+        csi_sequence, gt_pose, loader_info = load_sequence_with_dataset_loader(args)
+    else:
+        status("Loading CSI frames...")
+        csi_sequence, gt_pose, loader_info = load_sequence_with_direct_loader(
+            args, csi_path, gt_path
+        )
 
-    status("Loading ground truth...")
-    gt_pose = load_gt_sequence(gt_path, max_frames=args.max_frames)
+    if args.check_loader_consistency:
+        status("Checking demo-vs-dataset loader consistency...")
+        loader_info["loader_consistency"] = compute_loader_consistency(
+            args, csi_path, gt_path
+        )
 
     count = min(len(csi_sequence), len(gt_pose))
     csi_sequence = csi_sequence[:count]
@@ -809,6 +985,7 @@ def load_demo_payload(args):
             else {},
             "model_output_dims": int(output_dims),
             "metric_mode": "xy_mpjpe_mm" if output_dims == 2 else "xyz_mpjpe_mm",
+            **loader_info,
         },
         "rgb_source": str(video_path) if video_path is not None else "",
         "pose_normalization": pose_stats,
@@ -1028,12 +1205,29 @@ def main():
         payload = load_demo_payload(args)
         diagnostics = payload["diagnostics"]
         temporal_corr = diagnostics["temporal_correlation"]
+        paths = payload["paths"]
         print(
             "loaded: "
             f"gt_frames={len(payload['gt_frames'])}, "
             f"pred_frames={len(payload['pred_frames'])}, "
             f"first_frame_mpjpe={payload['mpjpe_frames_mm'][0]:.1f}mm"
         )
+        print(
+            "loader: "
+            f"{paths.get('sequence_loader')} "
+            f"({paths.get('sequence_loader_detail')})"
+        )
+        consistency = paths.get("loader_consistency")
+        if consistency:
+            if consistency.get("checked") and "shape_mismatch" not in consistency:
+                print(
+                    "loader consistency: "
+                    f"frames={consistency['num_compared_frames']}, "
+                    f"csi_max_abs_diff={consistency['csi_max_abs_diff']:.6g}, "
+                    f"gt_max_abs_diff={consistency['gt_max_abs_diff']:.6g}"
+                )
+            else:
+                print(f"loader consistency: {consistency}")
         print(
             "diagnostics: "
             f"mpjpe={diagnostics['mpjpe_mm']:.1f}mm, "
@@ -1059,7 +1253,7 @@ def main():
         print(
             "constant baselines: "
             f"first_gt={diagnostics['constant_first_gt_mpjpe_mm']:.1f}mm, "
-            f"sequence_mean_gt={diagnostics['constant_sequence_mean_gt_mpjpe_mm']:.1f}mm, "
+            f"oracle_sequence_mean_gt={diagnostics['constant_sequence_mean_gt_mpjpe_mm']:.1f}mm, "
             f"model_gain={diagnostics['mpjpe_gain_over_constant_sequence_mean_mm']:.1f}mm"
         )
         if diagnostics["warnings"]:

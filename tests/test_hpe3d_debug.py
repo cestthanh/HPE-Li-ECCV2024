@@ -1,5 +1,7 @@
 import unittest
 import sys
+import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +11,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from model import OriginalHPE3D, get_hpe3d_model_config
-from tools.demo_inference_3d import compute_demo_diagnostics
+from tools.demo_inference_3d import (
+    compute_demo_diagnostics,
+    load_csi_sequence,
+    load_sequence_with_dataset_loader,
+)
 
 
 class HPE3DCheckpointCompatibilityTests(unittest.TestCase):
@@ -96,6 +102,51 @@ class HPE3DDiagnosticTests(unittest.TestCase):
         warning_text = " ".join(diagnostics["warnings"])
         self.assertIn("constant sequence-mean pose", warning_text)
         self.assertIn("Predicted Z temporal variation", warning_text)
+
+
+class HPE3DDemoLoaderTests(unittest.TestCase):
+    def test_dataset_sequence_loader_matches_direct_csi_and_gt_loading(self):
+        try:
+            import scipy.io as scio
+        except Exception as exc:
+            self.skipTest(f"MMFi loader dependencies unavailable: {exc}")
+
+        rng = np.random.default_rng(7)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dataset_root = Path(tmp_dir)
+            sequence_root = dataset_root / "E01" / "S05" / "A06"
+            csi_root = sequence_root / "wifi-csi"
+            csi_root.mkdir(parents=True)
+
+            gt = rng.normal(size=(297, 17, 3)).astype(np.float32)
+            np.save(sequence_root / "ground_truth.npy", gt)
+
+            for frame_idx in range(297):
+                frame = rng.normal(size=(3, 114, 10)).astype(np.float32)
+                if frame_idx == 0:
+                    frame[0, 0, 0] = np.nan
+                    frame[1, 1, 1] = np.inf
+                scio.savemat(
+                    csi_root / f"frame{frame_idx + 1:03d}.mat",
+                    {"CSIamp": frame},
+                )
+
+            args = SimpleNamespace(
+                dataset_root=str(dataset_root),
+                scene="E01",
+                subject="S05",
+                action="A06",
+                max_frames=2,
+            )
+
+            dataset_csi, dataset_gt, loader_info = load_sequence_with_dataset_loader(args)
+            direct_csi = load_csi_sequence(csi_root, normalize=True, max_frames=2)
+
+            self.assertEqual(loader_info["sequence_loader"], "dataset")
+            self.assertEqual(dataset_csi.shape, (2, 3, 114, 10))
+            self.assertEqual(dataset_gt.shape, (2, 17, 3))
+            np.testing.assert_allclose(dataset_csi, direct_csi, atol=1e-7)
+            np.testing.assert_allclose(dataset_gt, gt[:2], atol=1e-7)
 
 
 if __name__ == "__main__":
