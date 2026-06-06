@@ -93,16 +93,19 @@ class MMFi_Database:
 
     def load_database(self):
         for scene in sorted(os.listdir(self.data_root)):
-            if scene.startswith("."):
+            scene_path = os.path.join(self.data_root, scene)
+            if scene.startswith(".") or not os.path.isdir(scene_path):
                 continue
             self.scenes[scene] = {}
-            for subject in sorted(os.listdir(os.path.join(self.data_root, scene))):
-                if subject.startswith("."):
+            for subject in sorted(os.listdir(scene_path)):
+                subject_path = os.path.join(scene_path, subject)
+                if subject.startswith(".") or not os.path.isdir(subject_path):
                     continue
                 self.scenes[scene][subject] = {}
                 self.subjects[subject] = {}
-                for action in sorted(os.listdir(os.path.join(self.data_root, scene, subject))):
-                    if action.startswith("."):
+                for action in sorted(os.listdir(subject_path)):
+                    action_path = os.path.join(subject_path, action)
+                    if action.startswith(".") or not os.path.isdir(action_path):
                         continue
                     self.scenes[scene][subject][action] = {}
                     self.subjects[subject][action] = {}
