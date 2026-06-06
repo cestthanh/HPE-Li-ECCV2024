@@ -1,0 +1,672 @@
+import argparse
+import copy
+import json
+import os
+import random
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import torch
+import yaml
+from sklearn.model_selection import train_test_split
+from torch.utils.data import Subset
+from tqdm import tqdm
+
+from dataset_lib import make_dataloader, make_dataset
+from model.dsknet_trans_mmfi_3d import DSKNetTransMMFI3D
+from utils.eval_3d import compute_3d_metrics
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train Phase C DSKNetTransMMFI3D: an author-aligned 3D port of "
+            "HPE-Li's MMFi DSKNetTrans backbone."
+        )
+    )
+    parser.add_argument(
+        "--config",
+        default=str(PROJECT_ROOT / "dataset_lib" / "config.yaml"),
+        help="Path to the MMFi dataset config.",
+    )
+    parser.add_argument(
+        "--dataset-root",
+        default=os.getenv(
+            "MMFI_DATASET_ROOT", str(PROJECT_ROOT / "data" / "mmfi" / "dataset")
+        ),
+        help="MMFi dataset root.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=os.getenv(
+            "PHASE_C_DSKNET3D_OUTPUT",
+            str(PROJECT_ROOT / "results" / "phase_c_dsknet3d"),
+        ),
+        help="Directory used for logs, metrics, and checkpoints.",
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=int(os.getenv("PHASE_C_DSKNET3D_EPOCHS", "20"))
+    )
+    parser.add_argument(
+        "--split-to-use",
+        default=None,
+        choices=[
+            "random_split",
+            "cross_scene_split",
+            "cross_subject_split",
+            "manual_split",
+        ],
+        help="Override config split_to_use without editing dataset_lib/config.yaml.",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=float(os.getenv("PHASE_C_DSKNET3D_LR", "0.001"))
+    )
+    parser.add_argument(
+        "--optimizer",
+        default="adam",
+        choices=["adam", "adamw"],
+        help="Adam mirrors att_mmfi.py; AdamW is available for stable retries.",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=float(os.getenv("PHASE_C_DSKNET3D_WEIGHT_DECAY", "0.0")),
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument(
+        "--loss",
+        default="smooth_l1",
+        choices=["smooth_l1", "mse"],
+        help="3D pose regression loss.",
+    )
+    parser.add_argument(
+        "--normalize-pose",
+        action="store_true",
+        help="Train on xyz normalized by train-set mean/std, then de-normalize for metrics.",
+    )
+    parser.add_argument("--pose-std-eps", type=float, default=1e-6)
+    parser.add_argument("--smooth-l1-beta", type=float, default=0.05)
+    parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument("--log-interval", type=int, default=100)
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=None,
+        help="Stop if val_mpjpe_mm has no meaningful improvement for this many epochs.",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=1.0,
+        help="Minimum val_mpjpe_mm improvement to reset early stopping patience.",
+    )
+    parser.add_argument(
+        "--eval-max-batches",
+        type=int,
+        default=None,
+        help="Limit validation/test batches for quick smoke tests.",
+    )
+    parser.add_argument(
+        "--max-train-batches",
+        type=int,
+        default=None,
+        help="Limit train batches for quick smoke tests.",
+    )
+    parser.add_argument("--train-batch-size", type=int, default=None)
+    parser.add_argument("--val-batch-size", type=int, default=None)
+    parser.add_argument("--test-batch-size", type=int, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Optional run name. Defaults to timestamp plus split/model.",
+    )
+    parser.add_argument("--no-test", action="store_true")
+    return parser.parse_args()
+
+
+def resolve_device(device_arg):
+    if device_arg == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device_arg == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested, but torch.cuda.is_available() is False.")
+    return torch.device(device_arg)
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def load_config(path):
+    with open(path, "r") as fd:
+        return yaml.load(fd, Loader=yaml.FullLoader)
+
+
+def apply_loader_overrides(config, args):
+    config = copy.deepcopy(config)
+    if args.split_to_use is not None:
+        config["split_to_use"] = args.split_to_use
+
+    for key in ("train_loader", "val_loader", "test_loader"):
+        config[key] = dict(config[key])
+
+    if args.train_batch_size is not None:
+        config["train_loader"]["batch_size"] = args.train_batch_size
+    if args.val_batch_size is not None:
+        config["val_loader"]["batch_size"] = args.val_batch_size
+    if args.test_batch_size is not None:
+        config["test_loader"]["batch_size"] = args.test_batch_size
+
+    if args.num_workers is not None:
+        for key in ("train_loader", "val_loader", "test_loader"):
+            config[key]["num_workers"] = args.num_workers
+
+    return config
+
+
+def make_run_dir(output_dir, run_name, split_to_use):
+    if run_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"{timestamp}_phase_c_dsknet3d_{split_to_use}"
+    run_dir = Path(output_dir) / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints").mkdir(exist_ok=True)
+    return run_dir
+
+
+def make_loaders(dataset_root, config, seed):
+    train_dataset, eval_dataset = make_dataset(dataset_root, config)
+    generator = torch.Generator().manual_seed(seed)
+
+    train_loader = make_dataloader(
+        train_dataset,
+        is_training=True,
+        generator=generator,
+        **config["train_loader"],
+    )
+
+    val_indices, test_indices = train_test_split(
+        list(range(len(eval_dataset))), test_size=0.5, random_state=41
+    )
+    val_dataset = Subset(eval_dataset, val_indices)
+    test_dataset = Subset(eval_dataset, test_indices)
+
+    val_loader = make_dataloader(
+        val_dataset,
+        is_training=False,
+        generator=generator,
+        **config["val_loader"],
+    )
+    test_loader = make_dataloader(
+        test_dataset,
+        is_training=False,
+        generator=generator,
+        **config["test_loader"],
+    )
+    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
+
+
+def compute_pose_normalization_stats(dataset, eps=1e-6):
+    if not hasattr(dataset, "data_list"):
+        poses = []
+        for idx in tqdm(range(len(dataset)), desc="compute pose stats"):
+            poses.append(dataset[idx]["output"][:, 0:3].numpy())
+        pose_array = np.stack(poses, axis=0)
+    else:
+        pose_chunks = []
+        last_gt_path = None
+        last_gt = None
+        for item in tqdm(dataset.data_list, desc="compute pose stats"):
+            if item["gt_path"] != last_gt_path:
+                last_gt_path = item["gt_path"]
+                last_gt = np.load(last_gt_path)
+
+            if "idx" in item:
+                pose_chunks.append(last_gt[item["idx"], :, 0:3])
+            else:
+                pose_chunks.append(last_gt[:, :, 0:3].reshape(-1, 3))
+
+        first_chunk = pose_chunks[0]
+        if first_chunk.ndim == 2 and first_chunk.shape == (17, 3):
+            pose_array = np.stack(pose_chunks, axis=0)
+        else:
+            pose_array = np.concatenate(pose_chunks, axis=0).reshape(-1, 17, 3)
+
+    mean_xyz = pose_array.reshape(-1, 3).mean(axis=0).astype(np.float32)
+    std_xyz = pose_array.reshape(-1, 3).std(axis=0).astype(np.float32)
+    std_xyz = np.maximum(std_xyz, eps)
+    return {
+        "enabled": True,
+        "mean_xyz": mean_xyz.tolist(),
+        "std_xyz": std_xyz.tolist(),
+        "eps": float(eps),
+        "num_frames": int(pose_array.shape[0]),
+        "num_joints_per_frame": int(pose_array.shape[1]),
+    }
+
+
+def make_pose_stats_tensors(pose_stats, device):
+    if not pose_stats or not pose_stats.get("enabled", False):
+        return None
+    return {
+        "mean": torch.tensor(pose_stats["mean_xyz"], device=device).view(1, 1, 3),
+        "std": torch.tensor(pose_stats["std_xyz"], device=device).view(1, 1, 3),
+    }
+
+
+def normalize_pose(pose, pose_stats_tensors):
+    if pose_stats_tensors is None:
+        return pose
+    return (pose - pose_stats_tensors["mean"]) / pose_stats_tensors["std"]
+
+
+def denormalize_pose(pose, pose_stats_tensors):
+    if pose_stats_tensors is None:
+        return pose
+    return pose * pose_stats_tensors["std"] + pose_stats_tensors["mean"]
+
+
+def make_criterion(args):
+    if args.loss == "smooth_l1":
+        return torch.nn.SmoothL1Loss(beta=args.smooth_l1_beta)
+    return torch.nn.MSELoss()
+
+
+def make_optimizer(args, model):
+    if args.optimizer == "adam":
+        return torch.optim.Adam(
+            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        )
+    return torch.optim.AdamW(
+        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+    )
+
+
+def batch_to_device(batch, device):
+    csi_data = batch["input_wifi-csi"].to(device).float()
+    gt_pose = batch["output"][:, :, 0:3].to(device).float()
+    return csi_data, gt_pose
+
+
+def evaluate(
+    model,
+    loader,
+    criterion,
+    device,
+    pose_stats_tensors=None,
+    max_batches=None,
+    desc="eval",
+):
+    model.eval()
+    losses = []
+    pred_chunks = []
+    gt_chunks = []
+
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(tqdm(loader, desc=desc, leave=False)):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+
+            csi_data, gt_pose = batch_to_device(batch, device)
+            pred_pose, _ = model(csi_data)
+            gt_pose_for_loss = normalize_pose(gt_pose, pose_stats_tensors)
+            loss = criterion(pred_pose, gt_pose_for_loss)
+            losses.append(float(loss.item()))
+
+            pred_pose_for_metrics = denormalize_pose(pred_pose, pose_stats_tensors)
+            pred_chunks.append(pred_pose_for_metrics.detach().cpu().numpy())
+            gt_chunks.append(gt_pose.detach().cpu().numpy())
+
+    if not losses:
+        raise RuntimeError(f"No batches were evaluated for {desc}.")
+
+    pred_all = np.concatenate(pred_chunks, axis=0)
+    gt_all = np.concatenate(gt_chunks, axis=0)
+    metrics = compute_3d_metrics(pred_all, gt_all)
+    metrics["loss"] = float(np.mean(losses))
+    metrics["num_samples"] = int(pred_all.shape[0])
+    metrics["num_batches"] = int(len(losses))
+    return metrics
+
+
+def train_one_epoch(
+    model,
+    loader,
+    criterion,
+    optimizer,
+    device,
+    args,
+    epoch,
+    pose_stats_tensors=None,
+):
+    model.train()
+    losses = []
+    progress = tqdm(loader, desc=f"train epoch {epoch}", leave=False)
+
+    for batch_idx, batch in enumerate(progress):
+        if args.max_train_batches is not None and batch_idx >= args.max_train_batches:
+            break
+
+        csi_data, gt_pose = batch_to_device(batch, device)
+        pred_pose, _ = model(csi_data)
+        gt_pose_for_loss = normalize_pose(gt_pose, pose_stats_tensors)
+        loss = criterion(pred_pose, gt_pose_for_loss)
+
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        if args.grad_clip is not None and args.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
+        optimizer.step()
+
+        loss_value = float(loss.item())
+        losses.append(loss_value)
+        if batch_idx % args.log_interval == 0:
+            print(
+                f"epoch={epoch}, batch={batch_idx}, "
+                f"loss={loss_value:.6f}, lr={optimizer.param_groups[0]['lr']:.6f}",
+                flush=True,
+            )
+        progress.set_postfix(loss=f"{loss_value:.4f}")
+
+    if not losses:
+        raise RuntimeError("No training batches were processed.")
+    return {"loss": float(np.mean(losses)), "num_batches": int(len(losses))}
+
+
+def save_json(path, payload):
+    with open(path, "w") as fd:
+        json.dump(payload, fd, indent=2)
+
+
+def save_checkpoint(path, model, optimizer, epoch, config, args, metrics):
+    torch.save(
+        {
+            "model_name": "DSKNetTransMMFI3D",
+            "model_config": model.get_model_config(),
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": epoch,
+            "config": config,
+            "args": vars(args),
+            "pose_normalization": metrics.get("pose_normalization"),
+            "metrics": metrics,
+        },
+        path,
+    )
+
+
+def print_epoch_metrics(epoch, train_metrics, val_metrics):
+    print(
+        "epoch=%d train_loss=%.6f val_loss=%.6f "
+        "val_mpjpe=%.3f val_pa_mpjpe=%.3f "
+        "val_pck50mm=%.3f val_pck100mm=%.3f "
+        "val_g_PCK@10=%.3f val_g_PCK@20=%.3f val_g_PCK@30=%.3f "
+        "val_g_PCK@40=%.3f val_g_PCK@50=%.3f pa_invalid=%d"
+        % (
+            epoch,
+            train_metrics["loss"],
+            val_metrics["loss"],
+            val_metrics["mpjpe_mm"],
+            val_metrics["pa_mpjpe_mm"],
+            val_metrics["pck_50mm"],
+            val_metrics["pck_100mm"],
+            val_metrics["g_PCK@10"],
+            val_metrics["g_PCK@20"],
+            val_metrics["g_PCK@30"],
+            val_metrics["g_PCK@40"],
+            val_metrics["g_PCK@50"],
+            val_metrics["pa_mpjpe_invalid_count"],
+        ),
+        flush=True,
+    )
+    print(
+        "val collapse diagnostics: axis_mae_mm=%s root_mpjpe=%.3f "
+        "root_centered_mpjpe=%.3f constant_mean_pose_mpjpe=%.3f "
+        "pa_gain_over_constant=%.3f"
+        % (
+            val_metrics["axis_mae_mm_by_name"],
+            val_metrics["root_mpjpe_mm"],
+            val_metrics["root_centered_mpjpe_mm"],
+            val_metrics["constant_mean_pose_mpjpe_mm"],
+            val_metrics["pa_mpjpe_gain_over_constant_mean_pose_mm"],
+        ),
+        flush=True,
+    )
+
+
+def main():
+    args = parse_args()
+    set_seed(args.seed)
+    device = resolve_device(args.device)
+
+    config = load_config(args.config)
+    config = apply_loader_overrides(config, args)
+    run_dir = make_run_dir(args.output_dir, args.run_name, config["split_to_use"])
+
+    with open(run_dir / "config.yaml", "w") as fd:
+        yaml.safe_dump(config, fd, sort_keys=False)
+    save_json(run_dir / "args.json", vars(args))
+
+    print(f"run_dir={run_dir}", flush=True)
+    print(f"dataset_root={args.dataset_root}", flush=True)
+    print(f"split_to_use={config['split_to_use']}", flush=True)
+    print(f"device={device}", flush=True)
+
+    train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset = make_loaders(
+        args.dataset_root, config, args.seed
+    )
+    print(
+        f"train_samples={len(train_dataset)}, val_samples={len(val_dataset)}, "
+        f"test_samples={len(test_dataset)}",
+        flush=True,
+    )
+    print(
+        f"train_batches={len(train_loader)}, val_batches={len(val_loader)}, "
+        f"test_batches={len(test_loader)}",
+        flush=True,
+    )
+
+    pose_stats = {"enabled": False}
+    if args.normalize_pose:
+        pose_stats = compute_pose_normalization_stats(
+            train_dataset, eps=args.pose_std_eps
+        )
+        print(
+            "pose_normalization enabled mean_xyz=%s std_xyz=%s"
+            % (pose_stats["mean_xyz"], pose_stats["std_xyz"]),
+            flush=True,
+        )
+    else:
+        print("pose_normalization disabled", flush=True)
+    save_json(run_dir / "xyz_stats.json", pose_stats)
+    pose_stats_tensors = make_pose_stats_tensors(pose_stats, device)
+
+    model = DSKNetTransMMFI3D().to(device)
+    print(f"model_name=DSKNetTransMMFI3D", flush=True)
+    print(f"model_config={model.get_model_config()}", flush=True)
+    criterion = make_criterion(args).to(device)
+    optimizer = make_optimizer(args, model)
+    print(
+        f"optimizer={args.optimizer} lr={args.lr} weight_decay={args.weight_decay}",
+        flush=True,
+    )
+
+    best_val_mpjpe = float("inf")
+    best_epoch = None
+    epochs_without_meaningful_improvement = 0
+    stopped_early = False
+    history = []
+    best_checkpoint_path = run_dir / "checkpoints" / "best.pt"
+    last_checkpoint_path = run_dir / "checkpoints" / "last.pt"
+
+    for epoch in range(1, args.epochs + 1):
+        train_metrics = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            args,
+            epoch,
+            pose_stats_tensors=pose_stats_tensors,
+        )
+        val_metrics = evaluate(
+            model,
+            val_loader,
+            criterion,
+            device,
+            pose_stats_tensors=pose_stats_tensors,
+            max_batches=args.eval_max_batches,
+            desc=f"val epoch {epoch}",
+        )
+
+        epoch_record = {
+            "epoch": epoch,
+            "train": train_metrics,
+            "val": val_metrics,
+        }
+        history.append(epoch_record)
+        save_json(run_dir / "history.json", history)
+        print_epoch_metrics(epoch, train_metrics, val_metrics)
+
+        checkpoint_metrics = {
+            "train": train_metrics,
+            "val": val_metrics,
+            "pose_normalization": pose_stats,
+        }
+        save_checkpoint(
+            last_checkpoint_path,
+            model,
+            optimizer,
+            epoch,
+            config,
+            args,
+            checkpoint_metrics,
+        )
+
+        current_val_mpjpe = val_metrics["mpjpe_mm"]
+        meaningful_improvement = (
+            current_val_mpjpe < best_val_mpjpe - args.early_stopping_min_delta
+        )
+        if current_val_mpjpe < best_val_mpjpe:
+            previous_best = best_val_mpjpe
+            best_val_mpjpe = current_val_mpjpe
+            best_epoch = epoch
+            save_checkpoint(
+                best_checkpoint_path,
+                model,
+                optimizer,
+                epoch,
+                config,
+                args,
+                checkpoint_metrics,
+            )
+            print(
+                f"saved best checkpoint at epoch={epoch} "
+                f"val_mpjpe={best_val_mpjpe:.3f}",
+                flush=True,
+            )
+            if meaningful_improvement or previous_best == float("inf"):
+                epochs_without_meaningful_improvement = 0
+            else:
+                epochs_without_meaningful_improvement += 1
+        else:
+            epochs_without_meaningful_improvement += 1
+
+        if (
+            args.early_stopping_patience is not None
+            and args.early_stopping_patience > 0
+            and epochs_without_meaningful_improvement >= args.early_stopping_patience
+        ):
+            print(
+                "early stopping triggered at epoch=%d "
+                "best_epoch=%s best_val_mpjpe=%.3f "
+                "epochs_without_meaningful_improvement=%d"
+                % (
+                    epoch,
+                    best_epoch,
+                    best_val_mpjpe,
+                    epochs_without_meaningful_improvement,
+                ),
+                flush=True,
+            )
+            stopped_early = True
+            break
+
+    final_payload = {
+        "best_epoch": best_epoch,
+        "best_val_mpjpe_mm": best_val_mpjpe,
+        "stopped_early": stopped_early,
+        "model_name": "DSKNetTransMMFI3D",
+        "model_config": model.get_model_config(),
+        "pose_normalization": pose_stats,
+        "history": history,
+    }
+
+    if not args.no_test:
+        try:
+            checkpoint = torch.load(
+                best_checkpoint_path, map_location=device, weights_only=False
+            )
+        except TypeError:
+            checkpoint = torch.load(best_checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        test_metrics = evaluate(
+            model,
+            test_loader,
+            criterion,
+            device,
+            pose_stats_tensors=pose_stats_tensors,
+            max_batches=args.eval_max_batches,
+            desc="test best",
+        )
+        final_payload["test"] = test_metrics
+        print(
+            "test_loss=%.6f test_mpjpe=%.3f test_pa_mpjpe=%.3f "
+            "test_pck50mm=%.3f test_pck100mm=%.3f "
+            "test_g_PCK@10=%.3f test_g_PCK@20=%.3f test_g_PCK@30=%.3f "
+            "test_g_PCK@40=%.3f test_g_PCK@50=%.3f pa_invalid=%d"
+            % (
+                test_metrics["loss"],
+                test_metrics["mpjpe_mm"],
+                test_metrics["pa_mpjpe_mm"],
+                test_metrics["pck_50mm"],
+                test_metrics["pck_100mm"],
+                test_metrics["g_PCK@10"],
+                test_metrics["g_PCK@20"],
+                test_metrics["g_PCK@30"],
+                test_metrics["g_PCK@40"],
+                test_metrics["g_PCK@50"],
+                test_metrics["pa_mpjpe_invalid_count"],
+            ),
+            flush=True,
+        )
+        print(
+            "test collapse diagnostics: axis_mae_mm=%s root_mpjpe=%.3f "
+            "root_centered_mpjpe=%.3f constant_mean_pose_mpjpe=%.3f "
+            "pa_gain_over_constant=%.3f"
+            % (
+                test_metrics["axis_mae_mm_by_name"],
+                test_metrics["root_mpjpe_mm"],
+                test_metrics["root_centered_mpjpe_mm"],
+                test_metrics["constant_mean_pose_mpjpe_mm"],
+                test_metrics["pa_mpjpe_gain_over_constant_mean_pose_mm"],
+            ),
+            flush=True,
+        )
+
+    save_json(run_dir / "final_metrics.json", final_payload)
+    print(f"finished run_dir={run_dir}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
