@@ -75,6 +75,32 @@
       font-weight: 650;
     }
 
+    .panel-title-actions {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-button {
+      height: 24px;
+      border-radius: 5px;
+      padding: 0 8px;
+      font-size: 11px;
+    }
+
+    .title-button.active {
+      border-color: #5bd0ff;
+      color: #8de0ff;
+    }
+
+    #frame-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .viewer,
     #rgb-wrap {
       flex: 1;
@@ -99,6 +125,162 @@
     #rgb-placeholder {
       color: #5b6272;
       font-size: 13px;
+    }
+
+    #metrics-drawer {
+      position: absolute;
+      left: 0;
+      top: 32px;
+      bottom: 0;
+      width: 100%;
+      z-index: 8;
+      display: flex;
+      flex-direction: column;
+      background: #0b0d12;
+      border-right: 1px solid #303747;
+      box-shadow: 12px 0 28px rgba(0, 0, 0, 0.36);
+      transform: translateX(-102%);
+      transition: transform 160ms ease-out;
+    }
+
+    #metrics-drawer.open {
+      transform: translateX(0);
+    }
+
+    .metrics-header {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      border-bottom: 1px solid #202532;
+      color: #d7dbe8;
+      font-weight: 650;
+    }
+
+    #metrics-content {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric-cell {
+      border: 1px solid #202532;
+      border-radius: 6px;
+      background: #10131a;
+      padding: 8px;
+      min-width: 0;
+    }
+
+    .metric-label {
+      color: #7f8799;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .metric-value {
+      margin-top: 3px;
+      color: #f0f3fa;
+      font-size: 17px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .metric-value.warn {
+      color: #ffb17b;
+    }
+
+    .axis-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .axis-pill {
+      border: 1px solid #202532;
+      border-radius: 5px;
+      background: #10131a;
+      padding: 6px;
+      color: #aeb6c8;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .metrics-section-title {
+      margin: 12px 0 6px;
+      color: #aeb6c8;
+      font-size: 11px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .joint-table-wrap {
+      overflow: auto;
+      border: 1px solid #202532;
+      border-radius: 6px;
+      background: #08090d;
+    }
+
+    #joint-metrics-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+      min-width: 430px;
+    }
+
+    #joint-metrics-table th,
+    #joint-metrics-table td {
+      padding: 6px 7px;
+      border-bottom: 1px solid #1a1f2b;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    #joint-metrics-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #10131a;
+      color: #7f8799;
+      font-size: 10px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+
+    #joint-metrics-table th:first-child,
+    #joint-metrics-table td:first-child {
+      text-align: left;
+    }
+
+    #joint-metrics-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .joint-error-high {
+      color: #ff8a3d;
+      font-weight: 700;
+    }
+
+    .joint-error-mid {
+      color: #ffd36a;
+      font-weight: 650;
+    }
+
+    .empty-metrics {
+      color: #7f8799;
+      padding: 12px;
     }
 
     .viewer canvas {
@@ -218,12 +400,68 @@
   <div id="loading">Connecting to local server...</div>
 
   <main id="main">
-    <section class="panel">
-      <div class="panel-title">RGB <span id="frame-name"></span></div>
+    <section class="panel" id="rgb-panel">
+      <div class="panel-title">
+        <span>RGB</span>
+        <div class="panel-title-actions">
+          <span id="frame-name"></span>
+          <button id="metrics-toggle" class="title-button" aria-expanded="false">Metrics</button>
+        </div>
+      </div>
       <div id="rgb-wrap">
         <div id="rgb-placeholder">No RGB frame</div>
         <img id="rgb-image" alt="RGB frame">
       </div>
+      <aside id="metrics-drawer" aria-hidden="true">
+        <div class="metrics-header">
+          <span>Frame Metrics</span>
+          <button id="metrics-close" class="title-button">Close</button>
+        </div>
+        <div id="metrics-content">
+          <div class="metric-grid">
+            <div class="metric-cell">
+              <div class="metric-label">MPJPE</div>
+              <div class="metric-value" id="metric-frame-mpjpe">-- mm</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Root Error</div>
+              <div class="metric-value" id="metric-root-error">-- mm</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Root-Centered</div>
+              <div class="metric-value" id="metric-root-centered">-- mm</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">PCK 50 / 100mm</div>
+              <div class="metric-value" id="metric-pck">-- / --</div>
+            </div>
+          </div>
+          <div class="axis-strip">
+            <div class="axis-pill">X <span id="metric-axis-x">--</span> mm</div>
+            <div class="axis-pill">Y <span id="metric-axis-y">--</span> mm</div>
+            <div class="axis-pill">Z <span id="metric-axis-z">--</span> mm</div>
+          </div>
+          <div class="metrics-section-title">Joint Errors</div>
+          <div class="joint-table-wrap">
+            <table id="joint-metrics-table">
+              <thead>
+                <tr>
+                  <th>Joint</th>
+                  <th>Error</th>
+                  <th>dX</th>
+                  <th>dY</th>
+                  <th>dZ</th>
+                </tr>
+              </thead>
+              <tbody id="joint-metrics-body">
+                <tr>
+                  <td colspan="5" class="empty-metrics">No frame selected</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </aside>
     </section>
 
     <section class="panel">
@@ -274,6 +512,17 @@
     const rgbImg = document.getElementById('rgb-image');
     const rgbPlaceholder = document.getElementById('rgb-placeholder');
     const pathInfo = document.getElementById('path-info');
+    const metricsDrawer = document.getElementById('metrics-drawer');
+    const metricsToggle = document.getElementById('metrics-toggle');
+    const metricsClose = document.getElementById('metrics-close');
+    const metricFrameMpjpe = document.getElementById('metric-frame-mpjpe');
+    const metricRootError = document.getElementById('metric-root-error');
+    const metricRootCentered = document.getElementById('metric-root-centered');
+    const metricPck = document.getElementById('metric-pck');
+    const metricAxisX = document.getElementById('metric-axis-x');
+    const metricAxisY = document.getElementById('metric-axis-y');
+    const metricAxisZ = document.getElementById('metric-axis-z');
+    const jointMetricsBody = document.getElementById('joint-metrics-body');
 
     function noCache(url) {
       return url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
@@ -292,6 +541,111 @@
 
     function color(value) {
       return new THREE.Color(value);
+    }
+
+    function distMm(a, b) {
+      const dx = (a[0] - b[0]) * 1000;
+      const dy = (a[1] - b[1]) * 1000;
+      const dz = (a[2] - b[2]) * 1000;
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    function formatMm(value) {
+      return Number.isFinite(value) ? value.toFixed(1) : '--';
+    }
+
+    function formatPct(value) {
+      return Number.isFinite(value) ? value.toFixed(1) + '%' : '--';
+    }
+
+    function errorClass(value) {
+      if (value >= 100) return 'joint-error-high';
+      if (value >= 50) return 'joint-error-mid';
+      return '';
+    }
+
+    function computeCurrentFrameMetrics(idx) {
+      if (!gt || !pred || !gt.frames[idx] || !pred.frames[idx]) return null;
+      const gtFrame = gt.frames[idx];
+      const predFrame = pred.frames[idx];
+      const jointRows = [];
+      let errorSum = 0;
+      let rootCenteredSum = 0;
+      let pck50Count = 0;
+      let pck100Count = 0;
+      let axisAbs = [0, 0, 0];
+      const gtRoot = gtFrame[0];
+      const predRoot = predFrame[0];
+
+      for (let i = 0; i < gtFrame.length; i++) {
+        const dx = (predFrame[i][0] - gtFrame[i][0]) * 1000;
+        const dy = (predFrame[i][1] - gtFrame[i][1]) * 1000;
+        const dz = (predFrame[i][2] - gtFrame[i][2]) * 1000;
+        const error = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const rcDx = ((predFrame[i][0] - predRoot[0]) - (gtFrame[i][0] - gtRoot[0])) * 1000;
+        const rcDy = ((predFrame[i][1] - predRoot[1]) - (gtFrame[i][1] - gtRoot[1])) * 1000;
+        const rcDz = ((predFrame[i][2] - predRoot[2]) - (gtFrame[i][2] - gtRoot[2])) * 1000;
+        const rootCenteredError = Math.sqrt(rcDx * rcDx + rcDy * rcDy + rcDz * rcDz);
+
+        errorSum += error;
+        rootCenteredSum += rootCenteredError;
+        if (error <= 50) pck50Count += 1;
+        if (error <= 100) pck100Count += 1;
+        axisAbs[0] += Math.abs(dx);
+        axisAbs[1] += Math.abs(dy);
+        axisAbs[2] += Math.abs(dz);
+        jointRows.push({
+          name: cfg?.joint_names?.[i] || `Joint ${i}`,
+          error,
+          dx,
+          dy,
+          dz
+        });
+      }
+
+      const count = gtFrame.length || 1;
+      return {
+        mpjpe: pred.mpjpe_frames_mm?.[idx] ?? (errorSum / count),
+        rootError: distMm(predRoot, gtRoot),
+        rootCentered: rootCenteredSum / count,
+        pck50: pck50Count * 100 / count,
+        pck100: pck100Count * 100 / count,
+        axisMae: axisAbs.map(v => v / count),
+        jointRows
+      };
+    }
+
+    function updateFrameMetrics(idx) {
+      const metrics = computeCurrentFrameMetrics(idx);
+      if (!metrics) return;
+
+      metricFrameMpjpe.textContent = `${formatMm(metrics.mpjpe)} mm`;
+      metricRootError.textContent = `${formatMm(metrics.rootError)} mm`;
+      metricRootCentered.textContent = `${formatMm(metrics.rootCentered)} mm`;
+      metricPck.textContent = `${formatPct(metrics.pck50)} / ${formatPct(metrics.pck100)}`;
+      metricAxisX.textContent = formatMm(metrics.axisMae[0]);
+      metricAxisY.textContent = formatMm(metrics.axisMae[1]);
+      metricAxisZ.textContent = formatMm(metrics.axisMae[2]);
+      metricFrameMpjpe.classList.toggle('warn', metrics.mpjpe >= 100);
+      metricRootCentered.classList.toggle('warn', metrics.rootCentered >= 100);
+
+      jointMetricsBody.innerHTML = metrics.jointRows.map(row => `
+        <tr>
+          <td>${row.name}</td>
+          <td class="${errorClass(row.error)}">${formatMm(row.error)}</td>
+          <td>${formatMm(row.dx)}</td>
+          <td>${formatMm(row.dy)}</td>
+          <td>${formatMm(row.dz)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function setMetricsOpen(open) {
+      metricsDrawer.classList.toggle('open', open);
+      metricsDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+      metricsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      metricsToggle.classList.toggle('active', open);
+      if (open) updateFrameMetrics(currentFrame);
     }
 
     class PoseViewer {
@@ -521,6 +875,7 @@
 
       const frameMpjpe = pred.mpjpe_frames_mm?.[currentFrame];
       mpjpe.textContent = frameMpjpe == null ? 'MPJPE -- mm' : `MPJPE ${frameMpjpe.toFixed(1)} mm`;
+      updateFrameMetrics(currentFrame);
 
       rgbImg.src = noCache('/api/rgb?frame=' + currentFrame);
     }
@@ -565,6 +920,10 @@
     }
 
     playBtn.addEventListener('click', togglePlay);
+    metricsToggle.addEventListener('click', () => {
+      setMetricsOpen(!metricsDrawer.classList.contains('open'));
+    });
+    metricsClose.addEventListener('click', () => setMetricsOpen(false));
     document.getElementById('prev-btn').addEventListener('click', () => {
       stopPlay();
       goToFrame(currentFrame - 1);
