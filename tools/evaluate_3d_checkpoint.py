@@ -67,14 +67,14 @@ def parse_args():
         "--output-graphpose-md",
         default=None,
         help=(
-            "Path to save GraphPose-style benchmark table. Defaults to "
+            "Path to save the body-scale g_PCK benchmark table. Defaults to "
             "checkpoint directory/graphpose_benchmark_<eval_split>.md."
         ),
     )
     parser.add_argument(
         "--method-name",
         default="HPE-Li-3D",
-        help="Method label used in the GraphPose-style benchmark table.",
+        help="Method label used in the body-scale g_PCK benchmark table.",
     )
     return parser.parse_args()
 
@@ -227,8 +227,9 @@ def make_graphpose_markdown_table(metrics, method_name):
             f"| {metrics['pa_mpjpe_mm']:.1f} |"
         ),
         "",
-        "`g_PCK@10`..`g_PCK@50` are GraphPose-style PCK values using thresholds 0.1..0.5 of the MMFi body scale, not millimeters.",
-        "For MMFi, the scale is the ground-truth distance between joint indices 5 and 12, matching GraphPose-Fi.",
+        "`g_PCK@10`..`g_PCK@50` use thresholds 0.1..0.5 of the MMFi body scale, not millimeters.",
+        "The corrected MMFi body scale is the ground-truth distance between R.Hip (index 1) and L.Shoulder (index 11).",
+        "These values are not directly comparable to legacy GraphPose-Fi results computed with indices (5, 12).",
     ]
     return "\n".join(lines) + "\n"
 

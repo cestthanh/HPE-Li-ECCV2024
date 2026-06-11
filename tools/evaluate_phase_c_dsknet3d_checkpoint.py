@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dataset_lib import make_dataloader, make_dataset
+from dataset_lib.splits import split_eval_dataset_by_sequence
 from model.dsknet_trans_mmfi_3d import (
     DSKNetTransMMFI3D,
     get_dsknet_trans_mmfi_3d_model_config,
@@ -55,7 +56,17 @@ def parse_args():
         "--eval-split",
         default="test",
         choices=["val", "test", "eval_all"],
-        help="Which half of eval dataset to evaluate.",
+        help="Which eval partition to evaluate.",
+    )
+    parser.add_argument(
+        "--eval-partition-unit",
+        default="auto",
+        choices=["auto", "sequence", "frame"],
+        help=(
+            "Use sequence-level splitting for new checkpoints or legacy frame-level "
+            "splitting. Auto reads checkpoint metadata and defaults to frame for old "
+            "checkpoints."
+        ),
     )
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
@@ -103,17 +114,52 @@ def load_config(args, checkpoint):
     return config
 
 
-def make_eval_loader(dataset_root, config, args):
+def get_eval_partition_unit(checkpoint, requested_unit):
+    if requested_unit != "auto":
+        return requested_unit
+    if isinstance(checkpoint, dict):
+        metadata = checkpoint.get("eval_split_metadata")
+        if not metadata:
+            metrics = checkpoint.get("metrics")
+            if isinstance(metrics, dict):
+                metadata = metrics.get("eval_split_metadata")
+        if isinstance(metadata, dict) and metadata.get("split_unit") == "sequence":
+            return "sequence"
+    return "frame"
+
+
+def make_eval_loader(dataset_root, config, args, partition_unit):
     _, eval_dataset = make_dataset(dataset_root, config)
 
     if args.eval_split == "eval_all":
         selected_dataset = eval_dataset
+        eval_split_metadata = {
+            "split_unit": "none",
+            "selection": "eval_all",
+            "num_frames": len(eval_dataset),
+        }
+    elif partition_unit == "sequence":
+        val_dataset, test_dataset, eval_split_metadata = (
+            split_eval_dataset_by_sequence(
+                eval_dataset, test_size=0.5, random_state=41
+            )
+        )
+        selected_dataset = val_dataset if args.eval_split == "val" else test_dataset
+        eval_split_metadata = dict(eval_split_metadata)
+        eval_split_metadata["selection"] = args.eval_split
     else:
         val_indices, test_indices = train_test_split(
             list(range(len(eval_dataset))), test_size=0.5, random_state=41
         )
         selected_indices = val_indices if args.eval_split == "val" else test_indices
         selected_dataset = Subset(eval_dataset, selected_indices)
+        eval_split_metadata = {
+            "split_unit": "frame",
+            "selection": args.eval_split,
+            "test_size": 0.5,
+            "random_state": 41,
+            "num_frames": len(selected_indices),
+        }
 
     generator = torch.Generator().manual_seed(args.seed)
     loader = make_dataloader(
@@ -124,7 +170,7 @@ def make_eval_loader(dataset_root, config, args):
         num_workers=args.num_workers,
         pin_memory=config["test_loader"].get("pin_memory", False),
     )
-    return loader, selected_dataset
+    return loader, selected_dataset, eval_split_metadata
 
 
 def strip_module_prefix(state_dict):
@@ -226,6 +272,10 @@ def make_graphpose_markdown_table(metrics, method_name):
             f"| {metrics['mpjpe_mm']:.1f} "
             f"| {metrics['pa_mpjpe_mm']:.1f} |"
         ),
+        "",
+        "`g_PCK@10`..`g_PCK@50` use thresholds 0.1..0.5 of the MMFi body scale, not millimeters.",
+        "The corrected MMFi body scale is the ground-truth distance between R.Hip (index 1) and L.Shoulder (index 11).",
+        "These values are not directly comparable to legacy GraphPose-Fi results computed with indices (5, 12).",
     ]
     return "\n".join(lines) + "\n"
 
@@ -236,7 +286,12 @@ def main():
     checkpoint_path = Path(args.checkpoint)
     checkpoint = load_checkpoint(checkpoint_path, device)
     config = load_config(args, checkpoint)
-    loader, selected_dataset = make_eval_loader(args.dataset_root, config, args)
+    partition_unit = get_eval_partition_unit(
+        checkpoint, args.eval_partition_unit
+    )
+    loader, selected_dataset, eval_split_metadata = make_eval_loader(
+        args.dataset_root, config, args, partition_unit
+    )
     model = load_model(checkpoint, device)
     pose_stats = get_pose_normalization(checkpoint)
     pose_stats_tensors = make_pose_stats_tensors(pose_stats, device)
@@ -255,6 +310,7 @@ def main():
     metrics["model_name"] = "DSKNetTransMMFI3D"
     metrics["model_config"] = model.get_model_config()
     metrics["pose_normalization"] = pose_stats
+    metrics["eval_split_metadata"] = eval_split_metadata
 
     output_json = (
         Path(args.output_json)
