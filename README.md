@@ -84,7 +84,7 @@ Train the 3D baseline on MM-Fi:
 python train_3d_baseline.py --dataset-root $env:MMFI_DATASET_ROOT --split-to-use random_split --device cuda
 ```
 
-Evaluate a 3D checkpoint and export both thesis metrics and GraphPose-style benchmark metrics:
+Evaluate a 3D checkpoint and export both thesis metrics and body-scale g_PCK benchmark metrics:
 
 ```powershell
 python tools/evaluate_3d_checkpoint.py `
@@ -97,7 +97,7 @@ python tools/evaluate_3d_checkpoint.py `
   --method-name "HPE-Li-3D"
 ```
 
-The main 3D metrics are MPJPE, PA-MPJPE, PCK@50mm, PCK@100mm, and per-joint MPJPE. GraphPose-style `g_PCK@10/20/30/40/50` is provided only for benchmark compatibility; it uses thresholds based on body scale, not millimeters.
+The main 3D metrics are MPJPE, PA-MPJPE, PCK@50mm, PCK@100mm, and per-joint MPJPE. `g_PCK@10/20/30/40/50` uses thresholds based on the ground-truth R.Hip-to-L.Shoulder body scale (joint indices 1 and 11), not millimeters. This corrected definition is not directly comparable to legacy GraphPose-Fi values computed with indices 5 and 12.
 
 ## Visualization 
 
