@@ -240,6 +240,15 @@
       min-width: 430px;
     }
 
+    #action-metrics-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+      min-width: 280px;
+    }
+
+    #action-metrics-table th,
+    #action-metrics-table td,
     #joint-metrics-table th,
     #joint-metrics-table td {
       padding: 6px 7px;
@@ -248,6 +257,7 @@
       white-space: nowrap;
     }
 
+    #action-metrics-table th,
     #joint-metrics-table th {
       position: sticky;
       top: 0;
@@ -259,11 +269,14 @@
       text-transform: uppercase;
     }
 
+    #action-metrics-table th:first-child,
+    #action-metrics-table td:first-child,
     #joint-metrics-table th:first-child,
     #joint-metrics-table td:first-child {
       text-align: left;
     }
 
+    #action-metrics-table tbody tr:last-child td,
     #joint-metrics-table tbody tr:last-child td {
       border-bottom: 0;
     }
@@ -414,10 +427,27 @@
       </div>
       <aside id="metrics-drawer" aria-hidden="true">
         <div class="metrics-header">
-          <span>Frame Metrics</span>
+          <span>Metrics</span>
           <button id="metrics-close" class="title-button">Close</button>
         </div>
         <div id="metrics-content">
+          <div class="metrics-section-title">Action Metrics</div>
+          <div class="joint-table-wrap">
+            <table id="action-metrics-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody id="action-metrics-body">
+                <tr>
+                  <td colspan="2" class="empty-metrics">No action loaded</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="metrics-section-title">Frame Metrics</div>
           <div class="metric-grid">
             <div class="metric-cell">
               <div class="metric-label">MPJPE</div>
@@ -522,6 +552,7 @@
     const metricAxisX = document.getElementById('metric-axis-x');
     const metricAxisY = document.getElementById('metric-axis-y');
     const metricAxisZ = document.getElementById('metric-axis-z');
+    const actionMetricsBody = document.getElementById('action-metrics-body');
     const jointMetricsBody = document.getElementById('joint-metrics-body');
 
     function noCache(url) {
@@ -556,6 +587,14 @@
 
     function formatPct(value) {
       return Number.isFinite(value) ? value.toFixed(1) + '%' : '--';
+    }
+
+    function formatRatio(value) {
+      return Number.isFinite(value) ? value.toFixed(3) : '--';
+    }
+
+    function actionMetricRow(label, value) {
+      return `<tr><td>${label}</td><td>${value}</td></tr>`;
     }
 
     function errorClass(value) {
@@ -638,6 +677,36 @@
           <td>${formatMm(row.dz)}</td>
         </tr>
       `).join('');
+    }
+
+    function updateActionMetrics() {
+      if (!diagnostics) return;
+      const axis = diagnostics.axis_mae_mm_by_name || {};
+      const corr = diagnostics.temporal_correlation || {};
+      const motion = diagnostics.motion_ratios || {};
+      const articulation = diagnostics.articulation_motion_ratios || {};
+      const rows = [
+        actionMetricRow('Frames', diagnostics.num_frames ?? '--'),
+        actionMetricRow('MPJPE', `${formatMm(diagnostics.mpjpe_mm)} mm`),
+        actionMetricRow('PA-MPJPE', `${formatMm(diagnostics.pa_mpjpe_mm)} mm`),
+        actionMetricRow('PCK@50mm', formatPct(diagnostics.pck_50mm)),
+        actionMetricRow('PCK@100mm', formatPct(diagnostics.pck_100mm)),
+        actionMetricRow('g_PCK@10', formatPct(diagnostics['g_PCK@10'])),
+        actionMetricRow('g_PCK@20', formatPct(diagnostics['g_PCK@20'])),
+        actionMetricRow('g_PCK@30', formatPct(diagnostics['g_PCK@30'])),
+        actionMetricRow('g_PCK@40', formatPct(diagnostics['g_PCK@40'])),
+        actionMetricRow('g_PCK@50', formatPct(diagnostics['g_PCK@50'])),
+        actionMetricRow('Root MPJPE', `${formatMm(diagnostics.root_mpjpe_mm)} mm`),
+        actionMetricRow('Root-Centered', `${formatMm(diagnostics.root_centered_mpjpe_mm)} mm`),
+        actionMetricRow('X MAE', `${formatMm(axis.x)} mm`),
+        actionMetricRow('Y MAE', `${formatMm(axis.y)} mm`),
+        actionMetricRow('Z MAE', `${formatMm(axis.z)} mm`),
+        actionMetricRow('Model Gain', `${formatMm(diagnostics.mpjpe_gain_over_constant_sequence_mean_mm)} mm`),
+        actionMetricRow('Coord Corr', formatRatio(corr.mean)),
+        actionMetricRow('Step Ratio', formatRatio(motion.mean_step_ratio)),
+        actionMetricRow('Articulation Ratio', formatRatio(articulation.mean_step_ratio))
+      ];
+      actionMetricsBody.innerHTML = rows.join('');
     }
 
     function setMetricsOpen(open) {
@@ -849,6 +918,7 @@
         const articulation = diagnostics?.articulation_motion_ratios?.mean_step_ratio == null ? '' : ` | articulation ${diagnostics.articulation_motion_ratios.mean_step_ratio.toFixed(2)}x`;
         pathInfo.textContent = (cfg.paths.checkpoint || '') + seqMpjpe + zMae + articulation + corr;
         pathInfo.title = diagnostics?.warnings?.join(' | ') || pathInfo.textContent;
+        updateActionMetrics();
 
         gtViewer = new PoseViewer('gt-viewer', cfg.gt_joint_colors, cfg.gt_edge_colors);
         predViewer = new PoseViewer('pred-viewer', cfg.pred_joint_colors, cfg.pred_edge_colors);
