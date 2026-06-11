@@ -25,7 +25,10 @@ MMFI_17_JOINT_NAMES = [
 XYZ_AXIS_NAMES = ("x", "y", "z")
 
 GRAPHPOSE_PCK_THRESHOLDS = (0.1, 0.2, 0.3, 0.4, 0.5)
-GRAPHPOSE_MMFI_SCALE_JOINTS = (5, 12)
+MMFI_BODY_SCALE_JOINTS = (1, 11)
+MMFI_BODY_SCALE_JOINT_NAMES = ("R.Hip", "L.Shoulder")
+# Backward-compatible alias for callers that imported the previous constant.
+GRAPHPOSE_MMFI_SCALE_JOINTS = MMFI_BODY_SCALE_JOINTS
 
 
 def _to_numpy(array):
@@ -67,24 +70,26 @@ def pck_3d_mm(pred_xyz, gt_xyz, threshold_mm=50.0):
     return float(np.mean(dist_mm <= threshold_mm) * 100.0)
 
 
-def graphpose_body_scale_mmfi(gt_xyz, scale_joints=GRAPHPOSE_MMFI_SCALE_JOINTS):
-    """Body scale used by GraphPose-Fi for MMFi CSI PCK."""
+def graphpose_body_scale_mmfi(gt_xyz, scale_joints=MMFI_BODY_SCALE_JOINTS):
+    """Return the corrected MMFi body scale from GT R.Hip to GT L.Shoulder."""
     gt_xyz = _to_numpy(gt_xyz)
     joint_a, joint_b = scale_joints
     return np.linalg.norm(gt_xyz[:, joint_a, :] - gt_xyz[:, joint_b, :], axis=-1)
 
 
 def graphpose_pck_mmfi(pred_xyz, gt_xyz, threshold, eps=1e-8):
-    """GraphPose-Fi compatible PCK for MMFi 17-joint 3D pose.
+    """Body-scale PCK for MMFi 17-joint 3D pose.
 
     `threshold=0.5` corresponds to benchmark column `g_PCK@50`, meaning
     the joint error is at most `0.5 * body_scale`. It is not a 50 mm threshold.
+    The corrected body scale is the GT distance between R.Hip (1) and
+    L.Shoulder (11).
     """
     pred_xyz, gt_xyz = _validate_pose_arrays(pred_xyz, gt_xyz)
-    if pred_xyz.shape[1] <= max(GRAPHPOSE_MMFI_SCALE_JOINTS):
+    if pred_xyz.shape[1] <= max(MMFI_BODY_SCALE_JOINTS):
         raise ValueError(
-            "GraphPose-style MMFi PCK expects at least "
-            f"{max(GRAPHPOSE_MMFI_SCALE_JOINTS) + 1} joints, got {pred_xyz.shape[1]}"
+            "MMFi body-scale PCK expects at least "
+            f"{max(MMFI_BODY_SCALE_JOINTS) + 1} joints, got {pred_xyz.shape[1]}"
         )
 
     dist = np.linalg.norm(pred_xyz - gt_xyz, axis=-1)
@@ -235,7 +240,9 @@ def compute_3d_metrics(pred_xyz, gt_xyz):
         "constant_mean_pose_pck_100mm": pck_3d_mm(
             constant_mean_pose, gt_xyz, threshold_mm=100.0
         ),
-        "g_PCK_scale_joints": list(GRAPHPOSE_MMFI_SCALE_JOINTS),
+        "g_PCK_scale_joints": list(MMFI_BODY_SCALE_JOINTS),
+        "g_PCK_scale_joint_names": list(MMFI_BODY_SCALE_JOINT_NAMES),
+        "g_PCK_scale_source": "ground_truth",
     }
     for threshold in GRAPHPOSE_PCK_THRESHOLDS:
         tag = int(round(threshold * 100))
