@@ -9,11 +9,10 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from sklearn.model_selection import train_test_split
-from torch.utils.data import Subset
 from tqdm import tqdm
 
 from dataset_lib import make_dataloader, make_dataset
+from dataset_lib.splits import split_eval_dataset_by_sequence
 from model.dsknet_trans_mmfi_3d import DSKNetTransMMFI3D
 from utils.eval_3d import compute_3d_metrics
 
@@ -194,11 +193,9 @@ def make_loaders(dataset_root, config, seed):
         **config["train_loader"],
     )
 
-    val_indices, test_indices = train_test_split(
-        list(range(len(eval_dataset))), test_size=0.5, random_state=41
+    val_dataset, test_dataset, eval_split_metadata = split_eval_dataset_by_sequence(
+        eval_dataset, test_size=0.5, random_state=41
     )
-    val_dataset = Subset(eval_dataset, val_indices)
-    test_dataset = Subset(eval_dataset, test_indices)
 
     val_loader = make_dataloader(
         val_dataset,
@@ -212,7 +209,15 @@ def make_loaders(dataset_root, config, seed):
         generator=generator,
         **config["test_loader"],
     )
-    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
+    return (
+        train_loader,
+        val_loader,
+        test_loader,
+        train_dataset,
+        val_dataset,
+        test_dataset,
+        eval_split_metadata,
+    )
 
 
 def compute_pose_normalization_stats(dataset, eps=1e-6):
@@ -387,6 +392,17 @@ def save_json(path, payload):
         json.dump(payload, fd, indent=2)
 
 
+def make_training_metadata(args):
+    return {
+        "loss": args.loss,
+        "pose_target_space": (
+            "normalized_xyz" if args.normalize_pose else "metric_xyz_meters"
+        ),
+        "checkpoint_selection_metric": "val_mpjpe_mm",
+        "checkpoint_selection_mode": "min",
+    }
+
+
 def save_checkpoint(path, model, optimizer, epoch, config, args, metrics):
     torch.save(
         {
@@ -398,6 +414,8 @@ def save_checkpoint(path, model, optimizer, epoch, config, args, metrics):
             "config": config,
             "args": vars(args),
             "pose_normalization": metrics.get("pose_normalization"),
+            "training_metadata": make_training_metadata(args),
+            "eval_split_metadata": metrics.get("eval_split_metadata"),
             "metrics": metrics,
         },
         path,
@@ -458,12 +476,28 @@ def main():
 
     print(f"run_dir={run_dir}", flush=True)
     print(f"dataset_root={args.dataset_root}", flush=True)
+    print(f"protocol={config['protocol']}", flush=True)
     print(f"split_to_use={config['split_to_use']}", flush=True)
+    if config["split_to_use"] == "random_split":
+        print(
+            "random_split_ratio=%s random_split_seed=%s"
+            % (
+                config["random_split"]["ratio"],
+                config["random_split"]["random_seed"],
+            ),
+            flush=True,
+        )
     print(f"device={device}", flush=True)
 
-    train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset = make_loaders(
-        args.dataset_root, config, args.seed
-    )
+    (
+        train_loader,
+        val_loader,
+        test_loader,
+        train_dataset,
+        val_dataset,
+        test_dataset,
+        eval_split_metadata,
+    ) = make_loaders(args.dataset_root, config, args.seed)
     print(
         f"train_samples={len(train_dataset)}, val_samples={len(val_dataset)}, "
         f"test_samples={len(test_dataset)}",
@@ -474,6 +508,7 @@ def main():
         f"test_batches={len(test_loader)}",
         flush=True,
     )
+    print(f"eval_split_metadata={eval_split_metadata}", flush=True)
 
     pose_stats = {"enabled": False}
     if args.normalize_pose:
@@ -495,6 +530,8 @@ def main():
     print(f"model_config={model.get_model_config()}", flush=True)
     criterion = make_criterion(args).to(device)
     optimizer = make_optimizer(args, model)
+    training_metadata = make_training_metadata(args)
+    print(f"training_metadata={training_metadata}", flush=True)
     print(
         f"optimizer={args.optimizer} lr={args.lr} weight_decay={args.weight_decay}",
         flush=True,
@@ -542,6 +579,7 @@ def main():
             "train": train_metrics,
             "val": val_metrics,
             "pose_normalization": pose_stats,
+            "eval_split_metadata": eval_split_metadata,
         }
         save_checkpoint(
             last_checkpoint_path,
@@ -609,6 +647,8 @@ def main():
         "model_name": "DSKNetTransMMFI3D",
         "model_config": model.get_model_config(),
         "pose_normalization": pose_stats,
+        "training_metadata": training_metadata,
+        "eval_split_metadata": eval_split_metadata,
         "history": history,
     }
 
